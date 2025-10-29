@@ -1,0 +1,675 @@
+#include <Arduino.h>
+
+// Declaraciones de funciones
+void Detenerse();
+void AtaqueEnemigo();
+void MoverAdelante();
+void Retroceder();
+void MoverDerecha();
+void MoverIzquierda();
+void ProcesarEvento();
+int LecturaAnalogicaSensoresPiso(int pinsensor, int numEjemplos);
+void LecturaSensores_Piso();
+void LecturaSensoresLaterales();
+void LecturaSensoresFrontal();
+void MostrarEstadoSensores();
+// void LeerControlRemoto(); - ELIMINADO
+
+//Sensores de distancia
+const int pinSensor_Lateral_derecho = 15;
+const int pinSensor_Lateral_izquierdo = 14;
+
+const int pinSensor_Frontal_izquierdo = 21;
+const int pinSensor_Frontal_derecho = 16;
+const int pinSensor_Superior = 18;
+
+// sensores de piso
+const int pinSensor_Piso_derecho = 17;
+const int pinSensor_Piso_izquierdo = 19;
+
+// Control remoto - DESHABILITADO
+// const int pinControl_Remoto = 27;  // Pin para control remoto/botón de inicio
+
+//Motor A
+const int MA1A = 25;  // Motor A IN1 - GPIO25
+const int MA2A = 26;  // Motor A IN2 - GPIO26
+const int PWMA = 5;   // PWM Motor A - GPIO5
+
+//Motor B  
+const int MA1B = 22;  // Motor B IN1 - GPIO22
+const int MA2B = 23;  // Motor B IN2 - GPIO23
+const int PWMB = 32;  // PWM Motor B - GPIO32 (cambio de GPIO10 a GPIO32)
+
+
+//Variables de velocidad de acciones 
+const int Velocidad_movimiento_seguir = 160;
+const int Velocidad_estandar = 180;
+const int Velocidad_normal = 200;
+const int Velocidad_maxima = 250;
+
+//Deteccion de enemigos 
+bool enemigo_delante = false;
+bool enemigo_derecha = false;
+bool enemigo_izquierda = false;
+bool enemigo_superior_izquierda = false;
+bool enemigo_superior_derecha = false;
+
+//Deteccion de piso
+bool piso_derecho = false;
+bool piso_izquierdo = false;
+
+//variables de deteccion de borde del dojo
+int Borde_blanco=60;
+const int Rango_entre_encerado_y_apagado=20;
+
+//variables para la lectura de sensores de piso
+const int Ejemplos=2; // numero de lecturas 
+const unsigned long Tiempo_entre_ejemplos=10; // tiempo entre lecturas
+unsigned long tiempo_ultima_muestra=0;// tiempo de la ultima muestra
+
+//valriables para la dracion de los movimientos
+const unsigned long Duracion_movimiento=200; 
+unsigned long tiempo_inicio_movimiento=0;
+
+//vairbales para debug
+int debug_sensor_lateral_derecho=0;
+int debug_sensor_lateral_izquierdo=0;
+
+// Variables para mostrar estado de sensores
+unsigned long tiempo_ultimo_debug = 0;
+const unsigned long intervalo_debug = 500; // Mostrar cada 500ms
+
+// Variable para movimiento automático al inicio
+bool movimiento_inicial_activado = true;
+
+// Control remoto completamente ELIMINADO - Robot siempre activo
+// bool robot_activado = true; - Ya no necesario
+// bool prev_estado_control = false;
+// unsigned long tiempo_ultimo_cambio = 0;
+// const unsigned long debounce_delay = 50;
+
+//Eventos donde se realizara los movimientos de det-eccion de borde
+bool evento_blanco_derecho = false;
+bool evento_blanco_izquierdo = false;
+bool evento_blanco_ambos = false;
+
+//eventos de deteccion de enemigos
+bool evento_enemigo_derecha = false;
+bool evento_enemigo_izquierda = false;
+bool evento_enemigo_frontal = false;
+bool evento_enemigo_frontal_derecha = false;
+bool evento_enemigo_frontal_izquierda = false;
+bool prev_colision_derecha_lateral = false;
+bool prev_colision_izquierda_lateral = false;
+bool prev_colision_frontal_derecho = false;
+bool prev_colision_frontal_izquierdo = false;
+bool prev_colision_frontal_superior = false;
+unsigned long tiempo_ultimo_evento_enemigo_lateral_derecha = 0;
+unsigned long tiempo_ultimo_evento_enemigo_lateral_izquierda = 0;
+unsigned long tiempo_ultimo_evento_enemigo_frontal_superior = 0;
+unsigned long tiempo_ultimo_evento_enemigo_frontal_derecho = 0;
+unsigned long tiempo_ultimo_evento_enemigo_frontal_izquierdo = 0;
+const unsigned long Tiempo_entre_eventos_enemigos_lateral = 40; 
+const unsigned long Tiempo_entre_eventos_enemigos_frontal = 40;
+
+//Duraccion de eventos de deteccion de enemigos
+const unsigned long Duracion_evento_enemigo_frontal = 300;
+const unsigned long Duracion_evento_enemigo_lateral = 200;
+
+//Duracion de eventos de deteccion de borde
+const unsigned long Duracion_evento_borde_un_sensor = 300;
+const unsigned long Duracion_evento_borde_ambos_sensores = 100;
+
+//Duracion actual de la accion
+unsigned long Duracion_actual=0;
+
+// Lectura analogica de sensores de piso 
+int LecturaAnalogicaSensoresPiso(int pinsensor, int numEjemplos)
+{
+    long suma=0;
+    for(int i=0;i<numEjemplos;i++)
+    {
+        suma+=analogRead(pinsensor);
+           delayMicroseconds(1);
+    }
+    return (int)(suma / numEjemplos);
+}
+void Detenerse() {
+    // Detener completamente ambos motores
+    digitalWrite(MA1A, LOW); digitalWrite(MA2A, LOW);  // Motor A parado
+    digitalWrite(MA1B, LOW); digitalWrite(MA2B, LOW);  // Motor B parado
+    analogWrite(PWMA, 0);    // Sin velocidad motor A
+    analogWrite(PWMB, 0);    // Sin velocidad motor B
+}
+
+void AtaqueEnemigo() {
+    // Avanzar con fuerza para empujar al enemigo
+    digitalWrite(MA1A, HIGH); digitalWrite(MA2A, LOW); // Motor A adelante
+    digitalWrite(MA1B, HIGH); digitalWrite(MA2B, LOW); // Motor B adelante
+    analogWrite(PWMA, Velocidad_normal);  // Velocidad 200 PWM
+    analogWrite(PWMB, Velocidad_normal);  // Velocidad 200 PWM
+}
+
+void MoverAdelante() {
+    // Movimiento normal hacia adelante
+    digitalWrite(MA1A, HIGH); digitalWrite(MA2A, LOW); // Motor A adelante
+    digitalWrite(MA1B, HIGH); digitalWrite(MA2B, LOW); // Motor B adelante
+    analogWrite(PWMA, Velocidad_normal);  // Velocidad 200 PWM
+    analogWrite(PWMB, Velocidad_normal);  // Velocidad 200 PWM
+}
+
+void Retroceder() {
+    // Retroceder con mayor velocidad para escapar rápidamente
+    digitalWrite(MA1A, LOW); digitalWrite(MA2A, HIGH); // Motor A atrás
+    digitalWrite(MA1B, LOW); digitalWrite(MA2B, HIGH); // Motor B atrás
+    analogWrite(PWMA, Velocidad_estandar); // Velocidad 180 PWM
+    analogWrite(PWMB, Velocidad_estandar); // Velocidad 180 PWM
+}
+
+void MoverDerecha() {
+    // Girar a la derecha: motor izquierdo adelante, motor derecho atrás
+    digitalWrite(MA1A, HIGH); digitalWrite(MA2A, LOW); // Motor A (izquierdo) adelante
+    digitalWrite(MA1B, LOW); digitalWrite(MA2B, HIGH); // Motor B (derecho) atrás
+    analogWrite(PWMA, Velocidad_normal);  // Velocidad 200 PWM
+    analogWrite(PWMB, Velocidad_normal);  // Velocidad 200 PWM
+}
+
+void MoverIzquierda() {
+    // Girar a la izquierda: motor izquierdo atrás, motor derecho adelante
+    digitalWrite(MA1A, LOW); digitalWrite(MA2A, HIGH); // Motor A (izquierdo) atrás
+    digitalWrite(MA1B, HIGH); digitalWrite(MA2B, LOW); // Motor B (derecho) adelante
+    analogWrite(PWMA, Velocidad_normal);  // Velocidad 200 PWM
+    analogWrite(PWMB, Velocidad_normal);  // Velocidad 200 PWM
+}
+
+
+
+// Variables de etapas eliminadas - ya no son necesarias
+// Los sensores laterales solo giran, los frontales solo atacan
+
+//control de prioridad de eventos
+//control de prioridad
+typedef enum
+{
+    PRIORIDAD_NINGUNA = 0,
+    PRIORIDAD_UN_BLANCO = 4,
+    PRIORIDAD_AMBOS_BLANCOS = 3,
+    PRIORIDAD_Deteccion_FRONTAL = 2,
+    PRIORIDAD_Deteccion_LATERAL = 1
+} PrioridadEvento;
+bool evento_en_proceso = false;
+unsigned long tiempo_evento_en_proceso = 0;
+PrioridadEvento prioridad_actual = PRIORIDAD_NINGUNA;
+
+void detenerAccion() {
+    MoverAdelante();
+    evento_en_proceso = false;
+    prioridad_actual = PRIORIDAD_NINGUNA;
+    Duracion_actual = 0;
+}
+
+//Funciones de control de motores
+unsigned long obtenerDuracionPorDefecto(PrioridadEvento prio, int lado) {
+    (void)lado;
+    switch (prio) {
+        case PRIORIDAD_Deteccion_LATERAL: return Duracion_evento_enemigo_lateral;
+        case PRIORIDAD_AMBOS_BLANCOS: return Duracion_evento_borde_ambos_sensores;
+        case PRIORIDAD_UN_BLANCO: return Duracion_evento_borde_un_sensor;
+        case PRIORIDAD_Deteccion_FRONTAL: return  Duracion_evento_enemigo_frontal;
+        default: return Duracion_movimiento;
+    }
+}
+
+
+// Declaracion de funciones donde se procesa y se aplica la logica de eventos
+
+void InicioEvento(PrioridadEvento nuevaPrioridad, int prioridad, long duracion)
+{
+  evento_en_proceso = true;
+  tiempo_evento_en_proceso = millis();
+  prioridad_actual = nuevaPrioridad;
+  // establecer duración de la accion
+  if (duracion > 0) Duracion_actual = (unsigned long)duracion;
+  else Duracion_actual = obtenerDuracionPorDefecto(nuevaPrioridad, prioridad);
+        if (nuevaPrioridad == PRIORIDAD_Deteccion_LATERAL ) {
+        // Sensores laterales
+        if (prioridad == 0) {
+            // Chocó por derecha > girar derecha para enfrentar al enemigo
+            MoverDerecha();
+        } else {
+            // Chocó por izquierda > girar izquierda para enfrentar al enemigo
+            MoverIzquierda();
+        }
+    }
+    else if (nuevaPrioridad == PRIORIDAD_AMBOS_BLANCOS) {
+        // Ambos sensores en borde > retroceder y girar para volver al centro
+        Retroceder();
+        MoverIzquierda();
+    }
+    else if (nuevaPrioridad == PRIORIDAD_UN_BLANCO) {
+        // Un sensor en blanco > apartarse: si derecho detecta -> girar izquierda
+        if (prioridad == 0) {
+            MoverIzquierda();
+        } else if (prioridad == 1) {
+            MoverDerecha();
+        }
+    }
+    else if (nuevaPrioridad == PRIORIDAD_Deteccion_FRONTAL) {
+        // Sensores frontales
+        if (prioridad == 2) {
+            // Sensor frontal derecho > girar derecha para seguir al enemigo
+            MoverDerecha();
+        } else if (prioridad == 3) {
+            // Sensor frontal izquierdo > girar izquierda para seguir al enemigo
+            MoverIzquierda();
+        } else if (prioridad == 4) {
+            // Sensor frontal superior > atacar directamente
+            AtaqueEnemigo();
+        }
+    }
+}
+
+// Finalizacion de eventos
+void FinEvento()
+{
+  evento_en_proceso = false;
+  prioridad_actual = PRIORIDAD_NINGUNA;
+}
+
+// Decide la prioridad actual revisando eventos en orden estratégico
+PrioridadEvento eventoPrioridadActual(int *lado)
+{
+    
+    *lado = -2;
+    if (evento_blanco_derecho) { *lado = 0; return PRIORIDAD_UN_BLANCO; }
+    if (evento_blanco_izquierdo) { *lado = 1; return PRIORIDAD_UN_BLANCO; }
+    if (evento_blanco_ambos) { *lado = -1; return PRIORIDAD_AMBOS_BLANCOS; }
+
+    // Sensor frontal superior (mayor prioridad) > atacar
+    if (evento_enemigo_frontal) { *lado = 4; return  PRIORIDAD_Deteccion_FRONTAL; }
+    // Sensores frontales laterales (menor prioridad) > seguir/perseguir
+    if ( evento_enemigo_frontal_derecha) { *lado = 2; return PRIORIDAD_Deteccion_FRONTAL; }
+    if (evento_enemigo_frontal_izquierda) { *lado = 3; return PRIORIDAD_Deteccion_FRONTAL; }
+
+    if (evento_enemigo_derecha) { *lado = 0; return PRIORIDAD_Deteccion_LATERAL; }
+    if (evento_enemigo_izquierda) { *lado = 1; return PRIORIDAD_Deteccion_LATERAL; }
+
+    return PRIORIDAD_NINGUNA;
+}
+
+// Funciones de movimiento
+void ProcesarEvento()
+{
+     // si hay acción en curso, comprobar fin o interrupción
+    if ( evento_en_proceso) {
+        // Si no estamos en maniobra por etapas, usar la duración normal y preempción
+        if (millis() - tiempo_evento_en_proceso >= Duracion_actual) {
+            // terminar acción
+            MoverAdelante();
+            // limpiar eventos ya consumidos
+            evento_enemigo_derecha = false;
+            evento_enemigo_izquierda = false;
+            evento_blanco_ambos = false;
+            evento_blanco_derecho = false;
+            evento_blanco_izquierdo = false;
+            evento_enemigo_frontal_derecha = false;
+            evento_enemigo_frontal_izquierda = false;
+            evento_enemigo_frontal = false;
+            return;
+        }
+        // comprobar interrupción por evento de mayor prioridad
+        int lado; 
+        PrioridadEvento mas_alta = eventoPrioridadActual(&lado);
+        if (mas_alta > prioridad_actual && mas_alta != PRIORIDAD_NINGUNA) {
+            // interrumpir acción actual con evento de mayor prioridad
+            MoverAdelante();
+            InicioEvento(mas_alta, lado, -1);
+            // limpiar evento iniciado
+            if (mas_alta == PRIORIDAD_Deteccion_LATERAL) {
+                if (lado==0)  evento_enemigo_derecha = false;
+                else evento_enemigo_izquierda = false;
+            } else if (mas_alta == PRIORIDAD_AMBOS_BLANCOS) {
+                evento_blanco_ambos = false;
+            } else if (mas_alta == PRIORIDAD_UN_BLANCO) {
+                if (lado==0) evento_blanco_derecho = false;
+                else evento_blanco_izquierdo = false;
+            }
+        }
+        return;
+    }
+
+    
+
+    // si no hay acción activa, iniciar la de mayor prioridad
+    int lado; 
+    PrioridadEvento mas_alta = eventoPrioridadActual(&lado);
+    if (mas_alta != PRIORIDAD_NINGUNA) {
+        InicioEvento(mas_alta, lado, -1);
+        // consumir evento
+        if (mas_alta == PRIORIDAD_Deteccion_LATERAL) {
+            if (lado==0) evento_enemigo_derecha = false;
+            else evento_enemigo_izquierda = false;
+        } else if (mas_alta == PRIORIDAD_AMBOS_BLANCOS) {
+            evento_blanco_ambos = false;
+        } else if (mas_alta == PRIORIDAD_UN_BLANCO) {
+            if (lado==0) evento_blanco_derecho = false;
+            else evento_blanco_izquierdo = false;
+        }
+    }
+}
+
+
+//sirve para que se actualice la lectura de los sensores de piso
+void LecturaSensores_Piso()
+{
+     debug_sensor_lateral_derecho = LecturaAnalogicaSensoresPiso(pinSensor_Piso_derecho, Ejemplos);
+    debug_sensor_lateral_izquierdo = LecturaAnalogicaSensoresPiso(pinSensor_Piso_izquierdo, Ejemplos);
+    int umbral_on = Borde_blanco + Rango_entre_encerado_y_apagado/2;
+    int umbral_off = Borde_blanco - Rango_entre_encerado_y_apagado/2;
+
+    bool nueva_derecha = piso_derecho;
+    if (!nueva_derecha && debug_sensor_lateral_derecho >= umbral_on) nueva_derecha = true;
+    else if (nueva_derecha && debug_sensor_lateral_derecho <= umbral_off) nueva_derecha = false;
+
+    bool nueva_izquierda = piso_izquierdo;
+    if (!nueva_izquierda && debug_sensor_lateral_izquierdo >= umbral_on) nueva_izquierda = true;
+    else if (nueva_izquierda && debug_sensor_lateral_izquierdo <= umbral_off) nueva_izquierda = false;
+
+
+    evento_blanco_derecho  = (!piso_derecho && nueva_derecha);
+    evento_blanco_izquierdo = (!piso_izquierdo && nueva_izquierda);
+    bool previo = (piso_derecho && piso_izquierdo);
+    bool nuevo  = (nueva_derecha && nueva_izquierda);
+    evento_blanco_ambos = (!previo && nuevo);
+
+    // Notificaciones inmediatas para sensores de piso
+    if (evento_blanco_derecho) {
+        Serial.print("⚠️ SENSOR PISO DERECHO DETECTÓ BORDE! (Pin 17) - Valor: ");
+        Serial.println(debug_sensor_lateral_derecho);
+    }
+    if (evento_blanco_izquierdo) {
+        Serial.print("⚠️ SENSOR PISO IZQUIERDO DETECTÓ BORDE! (Pin 19) - Valor: ");
+        Serial.println(debug_sensor_lateral_izquierdo);
+    }
+    if (evento_blanco_ambos) {
+        Serial.println("🚨 ¡AMBOS SENSORES DE PISO DETECTARON BORDE! - ¡RETROCEDER!");
+    }
+
+    piso_derecho = nueva_derecha;
+    piso_izquierdo = nueva_izquierda;
+
+}
+void LecturaSensoresLaterales()
+{
+    bool derecha_Lateral = digitalRead(pinSensor_Lateral_derecho);
+    bool izquierda_Lateral = digitalRead(pinSensor_Lateral_izquierdo);
+
+    unsigned long tiempo_actual = millis();
+
+   if (derecha_Lateral && !prev_colision_derecha_lateral && (tiempo_actual - tiempo_ultimo_evento_enemigo_frontal_derecho >= Tiempo_entre_eventos_enemigos_frontal)) {
+      evento_enemigo_derecha = true;
+        tiempo_ultimo_evento_enemigo_frontal_derecho = tiempo_actual;
+        prev_colision_derecha_lateral = true;
+        // Notificación inmediata
+        Serial.println("🚨 SENSOR LATERAL DERECHO DETECTÓ ENEMIGO! (Pin 15)");
+    } else if (!derecha_Lateral) {
+        prev_colision_derecha_lateral = false;
+    }
+
+    if (izquierda_Lateral && !prev_colision_izquierda_lateral && (tiempo_actual - tiempo_ultimo_evento_enemigo_frontal_izquierdo >= Tiempo_entre_eventos_enemigos_frontal)) {
+        evento_enemigo_izquierda = true;
+        tiempo_ultimo_evento_enemigo_frontal_izquierdo = tiempo_actual;
+        prev_colision_izquierda_lateral = true;
+        // Notificación inmediata
+        Serial.println("🚨 SENSOR LATERAL IZQUIERDO DETECTÓ ENEMIGO! (Pin 14)");
+    } else if (!izquierda_Lateral) {
+        prev_colision_izquierda_lateral = false;
+    }
+
+   
+    enemigo_derecha = derecha_Lateral;
+    enemigo_izquierda = izquierda_Lateral;
+
+}
+
+void LecturaSensoresFrontal()
+{
+    bool derecha_frontal = digitalRead(pinSensor_Frontal_derecho);
+    bool izquierda_frontal = digitalRead(pinSensor_Frontal_izquierdo);
+    bool superior = digitalRead(pinSensor_Superior);
+    unsigned long tiempo_actual = millis();
+
+    if (derecha_frontal && !prev_colision_frontal_derecho && (tiempo_actual - tiempo_ultimo_evento_enemigo_frontal_derecho >= Tiempo_entre_eventos_enemigos_frontal)) {
+       evento_enemigo_frontal_derecha= true;
+        tiempo_ultimo_evento_enemigo_frontal_derecho= tiempo_actual;
+        prev_colision_frontal_derecho = true;
+        // Notificación inmediata
+        Serial.println("🎯 SENSOR FRONTAL DERECHO DETECTÓ ENEMIGO! (Pin 16)");
+    } else if (!derecha_frontal) {
+        prev_colision_frontal_derecho = false;
+    }
+
+    if (izquierda_frontal && !prev_colision_frontal_izquierdo && (tiempo_actual - tiempo_ultimo_evento_enemigo_frontal_izquierdo >= Tiempo_entre_eventos_enemigos_frontal)) {
+        evento_enemigo_frontal_izquierda = true;
+        tiempo_ultimo_evento_enemigo_frontal_izquierdo = tiempo_actual;
+        prev_colision_frontal_izquierdo = true;
+        // Notificación inmediata
+        Serial.println("🎯 SENSOR FRONTAL IZQUIERDO DETECTÓ ENEMIGO! (Pin 21)");
+    } else if (!izquierda_frontal) {
+        prev_colision_frontal_izquierdo = false;
+    }
+
+    if (superior && !prev_colision_frontal_superior && (tiempo_actual - tiempo_ultimo_evento_enemigo_frontal_superior >= Tiempo_entre_eventos_enemigos_frontal)) {
+        evento_enemigo_frontal= true;
+        tiempo_ultimo_evento_enemigo_frontal_superior = tiempo_actual;
+        prev_colision_frontal_superior = true;
+        // Notificación inmediata
+        Serial.println("🚀 SENSOR FRONTAL SUPERIOR DETECTÓ ENEMIGO! (Pin 18) - ¡ATACAR!");
+    } else if (!superior) {
+        prev_colision_frontal_superior = false;
+    }
+
+    enemigo_superior_derecha = derecha_frontal;
+    enemigo_superior_izquierda = izquierda_frontal;
+    enemigo_delante = superior;
+
+}
+
+// Control remoto ELIMINADO - Robot funciona automáticamente
+/*
+void LeerControlRemoto() {
+    bool estado_actual = digitalRead(pinControl_Remoto);
+    unsigned long tiempo_actual = millis();
+    
+    // Verificar si ha pasado el tiempo de debounce
+    if (tiempo_actual - tiempo_ultimo_cambio > debounce_delay) {
+        
+        // Detectar cambio de LOW a HIGH (presión del botón)
+        if (estado_actual == HIGH && prev_estado_control == LOW) {
+            tiempo_ultimo_cambio = tiempo_actual;
+            
+            // Activar robot inmediatamente al presionar
+            if (!robot_activado) {
+                robot_activado = true;
+                Serial.println("\n� ¡ROBOT ACTIVADO! - Iniciando operación de combate");
+                Serial.println("🎮 Control remoto detectado - Sistema listo para pelear");
+                Serial.println("⚡ Robot respondiendo a comandos...\n");
+                
+                // Limpiar eventos para empezar fresco
+                evento_blanco_derecho = false;
+                evento_blanco_izquierdo = false;
+                evento_blanco_ambos = false;
+                evento_enemigo_derecha = false;
+                evento_enemigo_izquierda = false;
+                evento_enemigo_frontal = false;
+                evento_enemigo_frontal_derecha = false;
+                evento_enemigo_frontal_izquierda = false;
+                evento_en_proceso = false;
+                
+            } else {
+                // Si ya está activado, desactivar
+                robot_activado = false;
+                Serial.println("\n🔴 ROBOT DESACTIVADO - Parando todos los motores");
+                Serial.println("🛑 Sistema en modo seguro");
+                
+                    // Parar motores inmediatamente
+                    analogWrite(PWMA, 0); // Parar Motor A
+                    analogWrite(PWMB, 0); // Parar Motor B
+                    digitalWrite(MA1A, LOW);
+                    digitalWrite(MA2A, LOW);
+                    digitalWrite(MA1B, LOW);
+                    digitalWrite(MA2B, LOW);                // Limpiar todos los eventos
+                evento_blanco_derecho = false;
+                evento_blanco_izquierdo = false;
+                evento_blanco_ambos = false;
+                evento_enemigo_derecha = false;
+                evento_enemigo_izquierda = false;
+                evento_enemigo_frontal = false;
+                evento_enemigo_frontal_derecha = false;
+                evento_enemigo_frontal_izquierda = false;
+                evento_en_proceso = false;
+            }
+        }
+    }
+    
+    prev_estado_control = estado_actual;
+}
+*/
+
+// Función para mostrar el estado de todos los sensores
+void MostrarEstadoSensores() {
+    Serial.println("╔═══════════════════════════════════════════════════════════╗");
+    Serial.println("║                    🤖 ESTADO DE SENSORES                 ║");
+    Serial.println("╠═══════════════════════════════════════════════════════════╣");
+    
+    // Robot siempre activado (sin control remoto)
+    Serial.println("║ 🚀 ROBOT STATUS     │ Estado: 🟢 SIEMPRE ACTIVADO - SIN CONTROL REMOTO    ║");
+    
+    // Sensores de piso (analógicos)
+    Serial.print("║ 📊 SENSORES PISO    │ Derecho: ");
+    Serial.print(debug_sensor_lateral_derecho);
+    Serial.print(" │ Izquierdo: ");
+    Serial.print(debug_sensor_lateral_izquierdo);
+    Serial.print(" │ Umbral: ");
+    Serial.print(Borde_blanco);
+    Serial.println(" ║");
+    
+    // Estado de detección de bordes
+    Serial.print("║ ⚠️  BORDE DETECTADO │ Derecho: ");
+    Serial.print(piso_derecho ? "SÍ" : "NO");
+    Serial.print("  │ Izquierdo: ");
+    Serial.print(piso_izquierdo ? "SÍ" : "NO");
+    Serial.print("  │ Ambos: ");
+    Serial.print((piso_derecho && piso_izquierdo) ? "SÍ" : "NO");
+    Serial.println("    ║");
+    
+    // Sensores de distancia laterales
+    Serial.print("║ 👁️  SENSORES LATERAL│ Derecho: ");
+    Serial.print(enemigo_derecha ? "ENEMIGO" : "LIBRE  ");
+    Serial.print(" │ Izquierdo: ");
+    Serial.print(enemigo_izquierda ? "ENEMIGO" : "LIBRE  ");
+    Serial.println(" ║");
+    
+    // Sensores de distancia frontales
+    Serial.print("║ 🎯 SENSORES FRONTAL │ Derecho: ");
+    Serial.print(enemigo_superior_derecha ? "ENEMIGO" : "LIBRE  ");
+    Serial.print(" │ Izquierdo: ");
+    Serial.print(enemigo_superior_izquierda ? "ENEMIGO" : "LIBRE  ");
+    Serial.println(" ║");
+    
+    Serial.print("║                     │ Superior: ");
+    Serial.print(enemigo_delante ? "ENEMIGO" : "LIBRE   ");
+    Serial.println("                      ║");
+    
+    // Estado de eventos activos
+    Serial.print("║ 🚨 EVENTOS ACTIVOS  │ ");
+    bool hayEventos = false;
+    if (evento_blanco_derecho) { Serial.print("BORDE_DER "); hayEventos = true; }
+    if (evento_blanco_izquierdo) { Serial.print("BORDE_IZQ "); hayEventos = true; }
+    if (evento_blanco_ambos) { Serial.print("BORDE_AMBOS "); hayEventos = true; }
+    if (evento_enemigo_derecha) { Serial.print("ENEMIGO_DER "); hayEventos = true; }
+    if (evento_enemigo_izquierda) { Serial.print("ENEMIGO_IZQ "); hayEventos = true; }
+    if (evento_enemigo_frontal) { Serial.print("ENEMIGO_FRONT "); hayEventos = true; }
+    if (evento_enemigo_frontal_derecha) { Serial.print("FRONT_DER "); hayEventos = true; }
+    if (evento_enemigo_frontal_izquierda) { Serial.print("FRONT_IZQ "); hayEventos = true; }
+    if (!hayEventos) Serial.print("NINGUNO");
+    Serial.println(" ║");
+    
+    // Estado del sistema de prioridades
+    Serial.print("║ ⚖️  SISTEMA CONTROL │ Evento en proceso: ");
+    Serial.print(evento_en_proceso ? "SÍ" : "NO");
+    Serial.print(" │ Prioridad: ");
+    Serial.print((int)prioridad_actual);
+    Serial.println("   ║");
+    
+    Serial.println("╚═══════════════════════════════════════════════════════════╝");
+    Serial.print("⏱️  Tiempo: ");
+    Serial.print(millis() / 1000);
+    Serial.println(" segundos\n");
+}
+
+
+
+void setup() {
+    // Inicializar comunicación serial para debug
+    Serial.begin(115200);
+    Serial.println("=== INICIANDO ROBOT SUMO ESP32 ===");
+    Serial.println("Robot Sumo - Funcionamiento AUTOMÁTICO");
+    Serial.println("=====================================");
+    
+    pinMode(pinSensor_Lateral_derecho, INPUT);   
+    pinMode(pinSensor_Lateral_izquierdo, INPUT); 
+    pinMode(pinSensor_Frontal_derecho, INPUT);   
+    pinMode(pinSensor_Frontal_izquierdo, INPUT); 
+    pinMode(pinSensor_Superior, INPUT);          
+
+    pinMode(pinSensor_Piso_derecho, INPUT);     
+    pinMode(pinSensor_Piso_izquierdo, INPUT);    
+
+    // Configurar pines de motores como OUTPUT
+    pinMode(MA1A, OUTPUT);
+    pinMode(MA2A, OUTPUT);
+    pinMode(MA1B, OUTPUT);
+    pinMode(MA2B, OUTPUT);
+    
+    // Configurar pines PWM como OUTPUT
+    pinMode(PWMA, OUTPUT);
+    pinMode(PWMB, OUTPUT);
+    
+    // Control remoto ELIMINADO - Robot siempre activo
+    
+    // Inicializar motores parados
+    digitalWrite(MA1A, LOW);
+    digitalWrite(MA2A, LOW);
+    digitalWrite(MA1B, LOW);
+    digitalWrite(MA2B, LOW);
+    analogWrite(PWMA, 0);
+    analogWrite(PWMB, 0);
+    Serial.println("✅ Sistema listo - Robot funcionando automáticamente");
+}
+
+void loop() {
+    unsigned long tiempo_actual = millis();
+    
+    // Leer sensores de piso cada 10ms para detectar bordes blancos
+    if (tiempo_actual - tiempo_ultima_muestra >= Tiempo_entre_ejemplos) {
+        tiempo_ultima_muestra = tiempo_actual;
+        LecturaSensores_Piso();  // Detectar líneas blancas del dohyo
+    }
+    
+    // Leer sensores de colisión continuamente
+    LecturaSensoresLaterales();  // Detectar contacto por los lados
+    LecturaSensoresFrontal();    // Detectar enemigo al frente
+    
+    // Mostrar estado de sensores cada 500ms
+    if (tiempo_actual - tiempo_ultimo_debug >= intervalo_debug) {
+        tiempo_ultimo_debug = tiempo_actual;
+        MostrarEstadoSensores();
+    }
+    
+    // Procesar eventos y ejecutar estrategias de combate (DESHABILITADO para prueba)
+    ProcesarEvento();
+    
+    delay(100); // Pausa para debug
+}
+

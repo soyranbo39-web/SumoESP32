@@ -1,0 +1,973 @@
+#include <Arduino.h>
+//Declaracion de Funciones 
+long LeerSensorPromediado(int pin, int muestras, int delayUs);
+long LeerSensorPromediado(int pin, int muestras);
+int LeerSensorNormalizado(int pin, int sensorMin, int sensorMax, int muestras);
+bool EsBlanco(int pin, int sensorMin, int sensorMax, int umbral, int muestras);
+bool DeteccionEnemigos(int sensores);
+void SensoresPiso(int sensorizquierdo, int sensorderecho);
+void MoverAtras();
+void MoverAdelante();
+void Detenerse();
+void AtaqueEnemigo();
+void Retroceder();
+void MoverDerecha();
+void MoverIzquierda();
+
+void MoverAdelanteSuperRapido();
+void MoverAtrasSuperRapido();
+void MoverDerechaSuperRapido(); 
+void MoverIzquierdaSuperRapido();
+void RetrocederSuperRapido();
+void AtaqueSuperRapido();
+void GirarDerechaSuperRapido();
+void GirarIzquierdaSuperRapido();
+
+// Funciones súper rápidas adicionales
+
+int LeerSensorUltraRapido(int pin);
+int LeerSensorPisoOptimizado(int pin);   // Balance velocidad-precisión (2 muestras)
+int LeerSensorPisoPreciso(int pin);      // Máxima precisión (4 muestras + delay)
+int LeerSensorPisoHiperRapido(int pin);  // Máxima velocidad (1 muestra)
+// Definición de las funciones específicas de Arduino
+void SensoresLateralesSuperRapido(int sensorizquierdo, int sensorderecho);
+void SensoresFrontalesSuperRapido(int sensorizquierdo, int sensorcentral, int sensorderecho);
+
+// Funciones de control remoto y modos
+int LeerModoActivo();
+bool ControlRemotoActivo();
+void EjecutarModo(int modo);
+void ModoSumoNormal();
+void ModoAtaqueAgresivo();
+void ModoDefensivo();
+bool VerificarApagado();  // ✅ NUEVA: Verificar si se debe apagar
+void DelayConVerificacion(unsigned long ms);  // ✅ NUEVA: Delay que permite apagado
+
+
+
+const int PinSensor_Piso_Izquierdo = 4;   // GPIO4 - Sensor analógico de piso
+const int PinSensor_Piso_Derecho = 15;    // GPIO15 - Sensor analógico de piso
+
+
+const int PinSensor_Frontal_Izquierdo = 18;   // GPIO18 - Sensor digital de enemigo
+const int PinSensor_Frontal_Derecho = 16;     // GPIO16 - Sensor digital de enemigo
+const int PinSensor_Frontal_Central = 17;     // GPIO17 - Sensor digital de enemigo
+
+
+const int PinSensor_Lateral_Izquierdo = 19;   // GPIO19 - Sensor digital de enemigo
+const int PinSensor_Lateral_Derecho = 21;     // GPIO21 - Sensor digital de enemigo
+
+//variables de tipos de velocidades
+const int Velocidad_Lenta = 150;
+const int Velocidad_Media = 200;
+const int Velocidad_Maxima = 255;
+
+//Variable de umbral de deteccion de blanco  
+const int Umbral_Deteccion_Blanco = 70;  // Valor medio para detectar cambio negro->blanco
+
+//Variables de manejo de datos 
+
+const int Sensor_min = 200;
+const int Sensor_max = 1500;
+
+
+//Definicion de variable de motores 
+
+// Motor A (Derecho)
+const int MotorA_IN1 = 25;
+const int MotorA_IN2 = 26;
+const int MotorA_PWM = 5;
+
+// PWM channels (ESP32) - usar solo si se compila para ESP32
+//esto es de la configuracion del ESP32 para el manejo de PWM
+//asi que no le muevas jajajaj
+#ifdef ARDUINO_ARCH_ESP32
+const int MotorA_Channel = 0;
+const int MotorB_Channel = 1;
+const int PWM_Freq = 5000;
+const int PWM_Resolution = 8; 
+#endif
+
+// Motor B  (Izquierdo) 
+const int MotorB_IN1 = 22;
+const int MotorB_IN2 = 23;
+const int MotorB_PWM = 27;  
+
+// Control remoto y modos DIP
+const int Pin_Control_Remoto = 14;  
+const int Pin_DIP1 = 35;           
+const int Pin_DIP2 = 36;  // ⚠️ GPIO36 - SOLO INPUT (sin pullup interno)         
+const int Pin_DIP3 = 39;           
+     
+
+
+//DETECCIONDE BLANCO PARTE DEL CODIGO ESCENCIAL PARA LAS LECTURAS 
+
+//lee el sensor varias veces y devuelve el promedio
+//esta parte depende de cuentras muestras le suministres realizara la lectura y devolvera el promedio
+// Explicacion de los parametros 
+
+/// @brief Lee el sensor varias veces y devuelve el promedio
+/// @param pin El pin del sensor
+/// @param muestras La cantidad de muestras a promediar
+/// @param delayUs El retardo en microsegundos entre lecturas
+/// @return El valor promedio de las lecturas del sensor
+
+long LeerSensorPromediado(int pin, int muestras, int delayUs) {
+  long suma = 0;
+  for (int i = 0; i < muestras; i++) {
+    suma += analogRead(pin);
+    delayMicroseconds(delayUs);
+  }
+  return suma / muestras;
+}
+
+/// @brief Lee el sensor varias veces y devuelve el promedio
+/// @param pin El pin del sensor
+/// @param muestras La cantidad de muestras a promediar
+/// @return El valor promedio de las lecturas del sensor
+long LeerSensorPromediado(int pin, int muestras) {
+  return LeerSensorPromediado(pin, muestras, 100);
+}
+
+// Normaliza la lectura del sensor a un rango de 0 a 100
+/// @brief Lee el sensor y normaliza el valor a un rango de 0 a 100
+/// @param pin El pin del sensor
+/// @param sensorMin El valor mínimo del sensor para normalización
+/// @param sensorMax El valor máximo del sensor para normalización
+/// @param muestras La cantidad de muestras a promediar
+/// @return El valor normalizado del sensor en el rango 0-100
+int LeerSensorNormalizado(int pin, int sensorMin, int sensorMax, int muestras) {
+  long promedio = LeerSensorPromediado(pin, muestras, 200);  // Aumenté el delay a 200us
+  long valorNormalizado = map(promedio, sensorMin, sensorMax, 0, 100);
+  return constrain((int)valorNormalizado, 0, 100);
+}
+
+// Determina si el sensor detecta blanco basado en un umbral
+/// @brief Verifica si el sensor detecta blanco según un umbral
+/// @param pin El pin del sensor
+/// @param sensorMin El valor mínimo del sensor para normalización
+/// @param sensorMax El valor máximo del sensor para normalización
+/// @param umbral El umbral para determinar si es blanco
+/// @param muestras La cantidad de muestras a promediar
+/// @return true si el sensor detecta blanco, false en caso contrario
+bool EsBlanco(int pin, int sensorMin, int sensorMax, int umbral, int muestras) {
+  int v = LeerSensorNormalizado(pin, sensorMin, sensorMax, muestras);
+  return v < umbral; 
+}
+
+//=== FUNCIONES PARA SENSORES DIGITALES DE ENEMIGO ===
+/// @brief Verifica si los sensores DIGITALES detectan un enemigo
+/// @param sensores El pin del sensor DIGITAL (usa digitalRead)
+/// @return true si se detecta un enemigo (HIGH), false en caso contrario (LOW)
+bool DeteccionEnemigos(int sensores)
+{
+  return digitalRead(sensores) == HIGH;  // Sensores digitales: HIGH = enemigo detectado
+}
+
+// Movimientos de acuerdo a los sensores 
+/// @brief Controla los movimientos del robot basados en las lecturas de los sensores de piso
+/// @param sensorizquierdo Valor normalizado del sensor izquierdo (0-100)
+/// @param sensorderecho Valor normalizado del sensor derecho (0-100)
+/// @param Umbral_Deteccion_Blanco El umbral para detectar el color blanco
+/// @return void
+
+void SensoresPiso(int sensorizquierdo, int sensorderecho)
+{
+  // sensorizquierdo y sensorderecho son valores normalizados 0..100
+    if (sensorizquierdo >= Umbral_Deteccion_Blanco && sensorderecho >= Umbral_Deteccion_Blanco) {
+       MoverAtras();
+       DelayConVerificacion(400);  // ✅ Delay con verificación de apagado
+       MoverDerecha(); 
+       DelayConVerificacion(300);  // ✅ Delay con verificación de apagado
+    }
+    else if (sensorizquierdo < Umbral_Deteccion_Blanco ) {
+       MoverIzquierda();
+       DelayConVerificacion(300);  // ✅ Delay con verificación de apagado
+    }
+    else if (sensorderecho < Umbral_Deteccion_Blanco) {
+       MoverDerecha();
+       DelayConVerificacion(300);  // ✅ Delay con verificación de apagado
+    }
+
+
+}
+/// Movimientos de acuerdo a los sensores frontales
+/// @brief Controla los movimientos del robot basados en las lecturas de los sensores frontales
+/// @param sensorizquierdo Valor normalizado del sensor izquierdo (0-100)
+/// @param sensorderecho Valor normalizado del sensor derecho (0-100)
+/// @return void
+void SensoresLaterales(int sensorizquierdo, int sensorderecho)
+{
+
+  if (sensorizquierdo  ) {
+    MoverIzquierda();
+  }
+   else if (sensorderecho) {
+    MoverDerecha();
+  }
+ 
+}
+
+// Sensores frontales
+/// @brief Controla los movimientos del robot basados en las lecturas de los sensores frontales
+/// @param sensorizquierdo Valor normalizado del sensor izquierdo (0-100)
+/// @param sensorcentral Valor normalizado del sensor central (0-100)
+/// @param sensorderecho Valor normalizado del sensor derecho (0-100)
+/// @return void
+
+void SensoresFrontales(int sensorizquierdo, int sensorcentral, int sensorderecho)
+{
+  // sensorizquierdo, sensorcentral y sensorderecho son valores booleanos
+  if (sensorcentral ) {
+    AtaqueEnemigo();
+  }
+   else if (sensorizquierdo) {
+    MoverIzquierda();
+  }
+   else if (sensorderecho) {
+    MoverDerecha();
+  }
+ 
+}
+
+//Movimientos de los motores 
+void MoverAtras() {
+    // Motor A (derecho) atrás
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW );
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+  #endif
+    
+    // Motor B (izquierdo) atrás
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+void Retroceder() {
+    // Motor A (derecho) adelante
+    digitalWrite(MotorA_IN1, LOW );
+    digitalWrite(MotorA_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+  #endif
+    
+    // Motor B (izquierdo) adelante
+    digitalWrite(MotorB_IN1, HIGH);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+void Detenerse() {
+    // Detener ambos motores
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, 0);
+    ledcWrite(MotorB_Channel, 0);
+  #else
+    analogWrite(MotorA_PWM, 0);
+    analogWrite(MotorB_PWM, 0);
+  #endif
+}
+
+void AtaqueEnemigo() {
+    // Avanzar con fuerza para empujar al enemigo
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, HIGH);
+    digitalWrite(MotorB_IN1, HIGH);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Maxima);
+    ledcWrite(MotorB_Channel, Velocidad_Maxima);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Maxima);
+    analogWrite(MotorB_PWM, Velocidad_Maxima);
+  #endif
+}
+
+void  MoverAdelante() {
+    // Retroceder con mayor velocidad para escapar rápidamente
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+void MoverDerecha() {
+    // Girar a la derecha: motor izquierdo adelante, motor derecho atrás
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW );
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+void MoverIzquierda() {
+    // Girar a la izquierda: motor izquierdo atrás, motor derecho adelante
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+
+// Funcion de control remoto y modos
+
+// Variables globales para el control remoto toggle
+bool robot_encendido = false;
+bool ultimo_estado_boton = HIGH;
+unsigned long ultimo_cambio_boton = 0;
+const unsigned long debounce_delay = 300;  /// @brief Tiempo de debounce para el botón bool control remoto
+
+
+/// @return bool 
+bool ControlRemotoActivo() {
+  bool estado_actual = digitalRead(Pin_Control_Remoto);
+  // Detectar si el botón fue presionado 
+  if (estado_actual == LOW && ultimo_estado_boton == HIGH) {
+   
+    if (millis() - ultimo_cambio_boton > debounce_delay) {
+      robot_encendido = !robot_encendido;
+      ultimo_cambio_boton = millis();
+      
+    }
+  }
+  // Actualizar el último estado del botón
+  ultimo_estado_boton = estado_actual;
+  return robot_encendido;
+}
+
+/// @brief Verificar si el robot debe apagarse (para llamar desde los modos)
+/// @return true si se debe apagar, false si continúa
+bool VerificarApagado() {
+  static unsigned long ultimo_check = 0;
+  
+  // Solo verificar cada 100ms para no interferir con el funcionamiento
+  if (millis() - ultimo_check > 100) {
+    ultimo_check = millis();
+    
+    bool estado_actual = digitalRead(Pin_Control_Remoto);
+    
+    // Detectar si el botón fue presionado para apagar
+    if (estado_actual == LOW && ultimo_estado_boton == HIGH) {
+      if (millis() - ultimo_cambio_boton > debounce_delay) {
+        robot_encendido = false;  // Forzar apagado
+        ultimo_cambio_boton = millis();
+        ultimo_estado_boton = estado_actual;
+        return true;  // Indicar que se debe apagar
+      }
+    }
+    ultimo_estado_boton = estado_actual;
+  }
+  
+  return false;  // Continuar funcionando
+}
+
+/// @brief Delay que permite verificar apagado durante la espera
+/// @param ms Milisegundos a esperar
+void DelayConVerificacion(unsigned long ms) {
+  unsigned long inicio = millis();
+  while (millis() - inicio < ms) {
+    if (VerificarApagado()) {
+      Detenerse();
+      return;
+    }
+    delay(10);  // Pequeña pausa para no saturar el CPU
+  }
+}
+
+/// @return int
+/// @brief Lee el modo activo del robot
+int LeerModoActivo() {
+  // ✅ LEER una sola vez para evitar cambios durante la función
+  bool dip1_activo = (digitalRead(Pin_DIP1) == LOW);    // GPIO35 con pullup
+  bool dip2_activo = (digitalRead(Pin_DIP2) == HIGH);   // GPIO36 sin pullup
+  bool dip3_activo = (digitalRead(Pin_DIP3) == LOW);    // GPIO39 con pullup
+  
+  // ✅ PRIORIDAD: Solo un modo a la vez, prioridad por orden
+  if (dip1_activo && !dip2_activo && !dip3_activo) {
+    return 1;  // Solo modo 1
+  }
+  else if (!dip1_activo && dip2_activo && !dip3_activo) {
+    return 2;  // Solo modo 2  
+  }
+  else if (!dip1_activo && !dip2_activo && dip3_activo) {
+    return 3;  // Solo modo 3
+  }
+  else {
+    // ⚠️ Múltiples DIPs activos o ninguno - usar modo por defecto
+    return 0;  // Sin modo definido
+  }
+}
+
+/// @brief Ejecuta el modo seleccionado del robot
+/// @param modo El modo a ejecutar
+/// @return void
+void EjecutarModo(int modo) {
+  switch(modo) {
+    case 1:
+      ModoSumoNormal();
+      break;
+      
+    case 2:
+      ModoAtaqueAgresivo();  // ✅ CORREGIDO: Modo 2 debe ser agresivo
+      break;
+      
+    case 3:
+      ModoDefensivo();
+      break;
+      
+    default:
+      // ⚠️ Modo inválido o múltiples DIPs activos
+      Detenerse();
+      Serial.println("⚠️ MODO INVÁLIDO - Robot detenido");
+      break;
+  }
+}
+/// Definicion de los modos de funcionamiento del robot
+/// @brief Modo Sumo Normal
+/// @return void
+void ModoSumoNormal() {
+  // ✅ VERIFICAR si se debe apagar durante la ejecución
+  if (VerificarApagado()) {
+    Detenerse();
+    return;
+  }
+  
+  // OPTIMIZACIÓN: Usar función específica para piso (más rápida y precisa)
+  int piso_izq_norm =  LeerSensorPisoHiperRapido(PinSensor_Piso_Izquierdo);
+  int piso_der_norm = LeerSensorPisoHiperRapido(PinSensor_Piso_Derecho);
+    // Prioridad 2: Detectar enemigos (después de verificar piso)
+  bool enemigo_frontal_izq = DeteccionEnemigos(PinSensor_Frontal_Izquierdo);
+  bool enemigo_frontal_cen = DeteccionEnemigos(PinSensor_Frontal_Central);
+  bool enemigo_frontal_der = DeteccionEnemigos(PinSensor_Frontal_Derecho);
+  bool enemigo_lat_izq = DeteccionEnemigos(PinSensor_Lateral_Izquierdo);
+  bool enemigo_lat_der = DeteccionEnemigos(PinSensor_Lateral_Derecho);
+
+  
+ 
+  if (piso_izq_norm < Umbral_Deteccion_Blanco || piso_der_norm < Umbral_Deteccion_Blanco) {
+    Serial.println("¡BORDE DETECTADO!");
+    Serial.print("IZQ: "); Serial.print(piso_izq_norm);
+    Serial.print(" | DER: "); Serial.println(piso_der_norm);
+    
+    // Ambos detectan borde blanco -> EMERGENCIA
+    if (piso_izq_norm < Umbral_Deteccion_Blanco && piso_der_norm < Umbral_Deteccion_Blanco) {
+      Serial.println("AMBOS SENSORES - RETROCESO EMERGENCIA");
+      
+      // ✅ VERIFICAR apagado durante escape
+      if (VerificarApagado()) {
+        Detenerse();
+        return;
+      }
+      
+      Retroceder();
+      DelayConVerificacion(200);  // ✅ Delay con verificación de apagado
+      
+      MoverDerecha();
+      DelayConVerificacion(300);  // ✅ Delay con verificación de apagado
+      
+      return;
+    }
+    // Solo izquierdo detecta borde -> girar derecha
+     if (piso_izq_norm < Umbral_Deteccion_Blanco) {
+      Serial.println("SENSOR IZQ - GIRAR DERECHA");
+      
+      // ✅ VERIFICAR apagado antes de girar
+      if (VerificarApagado()) {
+        Detenerse();
+        return;
+      }
+      
+      MoverDerecha();
+      DelayConVerificacion(400);  // ✅ Delay con verificación de apagado
+      return;
+    }
+      // Solo derecho detecta borde -> girar izquierda
+     if (piso_der_norm < Umbral_Deteccion_Blanco) {
+      Serial.println("SENSOR DER - GIRAR IZQUIERDA");
+      
+      // ✅ VERIFICAR apagado antes de girar
+      if (VerificarApagado()) {
+        Detenerse();
+        return;
+      }
+      
+      MoverIzquierda();
+      DelayConVerificacion(400);  // ✅ Delay con verificación de apagado
+      return;
+    }
+ 
+  }
+
+
+
+  if (enemigo_frontal_cen) {
+    AtaqueEnemigo();
+    return;
+  }
+  else if (enemigo_frontal_izq) {
+    MoverIzquierda();
+    return;
+  }
+  else if (enemigo_frontal_der) {
+    MoverDerecha();
+    return;
+  }
+  else if (enemigo_lat_izq) {
+    MoverIzquierda();
+    return;
+  }
+  else if (enemigo_lat_der) {
+    MoverDerecha();
+    return;
+  }
+
+  // // Prioridad 3: Buscar enemigo moviendo hacia adelante
+MoverAdelante();
+}
+
+/// @brief Modo de ataque agresivo
+/// @return void
+void ModoAtaqueAgresivo() {
+  // ✅ VERIFICAR si se debe apagar durante la ejecución
+  if (VerificarApagado()) {
+    Detenerse();
+    return;
+  }
+  
+  // 🚨 PRIORIDAD 1: DETECTAR PISO RÁPIDO (máxima velocidad)
+  int piso_izq_norm = LeerSensorPisoHiperRapido(PinSensor_Piso_Izquierdo);
+  int piso_der_norm = LeerSensorPisoHiperRapido(PinSensor_Piso_Derecho);
+  
+  // ✅ VERIFICAR PISO PRIMERO - MÁXIMA PRIORIDAD
+  if (piso_izq_norm < Umbral_Deteccion_Blanco || piso_der_norm < Umbral_Deteccion_Blanco) {
+    Serial.println("🚨 PISO DETECTADO - MODO AGRESIVO");
+    SensoresPiso(piso_izq_norm, piso_der_norm);
+    return;
+  }
+  
+  // Prioridad 2: Detectar enemigos solo si no hay piso
+  bool enemigo_frontal_izq = DeteccionEnemigos(PinSensor_Frontal_Izquierdo);
+  bool enemigo_frontal_cen = DeteccionEnemigos(PinSensor_Frontal_Central);
+  bool enemigo_frontal_der = DeteccionEnemigos(PinSensor_Frontal_Derecho);
+  bool enemigo_lat_izq = DeteccionEnemigos(PinSensor_Lateral_Izquierdo);
+  bool enemigo_lat_der = DeteccionEnemigos(PinSensor_Lateral_Derecho);
+
+  if (enemigo_frontal_cen || enemigo_frontal_izq || enemigo_frontal_der) {
+    AtaqueEnemigo();
+  }
+  else if (enemigo_lat_izq) {
+    MoverIzquierda();
+  }
+  else if (enemigo_lat_der) {
+    MoverDerecha();
+  }
+  else {
+    AtaqueEnemigo();  // Buscar enemigo por defecto
+  }
+}
+/// @brief Modo Defensivo
+/// @return void
+void ModoDefensivo() {
+  // ✅ VERIFICAR si se debe apagar durante la ejecución
+  if (VerificarApagado()) {
+    Detenerse();
+    return;
+  }
+  
+  // 🚨 PRIORIDAD 1: DETECTAR PISO RÁPIDO (máxima velocidad)
+  int piso_izq_norm = LeerSensorPisoHiperRapido(PinSensor_Piso_Izquierdo);
+  int piso_der_norm = LeerSensorPisoHiperRapido(PinSensor_Piso_Derecho);
+
+  // ✅ VERIFICAR PISO PRIMERO - MÁXIMA PRIORIDAD con umbral de seguridad
+  int umbral_seguridad = Umbral_Deteccion_Blanco + 10; 
+  if (piso_izq_norm < umbral_seguridad || piso_der_norm < umbral_seguridad) {
+    Serial.println("🚨 PISO DETECTADO - MODO DEFENSIVO");
+    SensoresPiso(piso_izq_norm, piso_der_norm);
+    return;
+  }
+  
+  // Prioridad 2: Detectar enemigos solo si no hay piso
+  bool enemigo_frontal_izq = DeteccionEnemigos(PinSensor_Frontal_Izquierdo);
+  bool enemigo_frontal_cen = DeteccionEnemigos(PinSensor_Frontal_Central);
+  bool enemigo_frontal_der = DeteccionEnemigos(PinSensor_Frontal_Derecho);
+  bool enemigo_lat_izq = DeteccionEnemigos(PinSensor_Lateral_Izquierdo);
+  bool enemigo_lat_der = DeteccionEnemigos(PinSensor_Lateral_Derecho);
+  
+ 
+  if (enemigo_frontal_cen) {
+ 
+    AtaqueEnemigo();
+  }
+  
+  else if (enemigo_frontal_izq) {
+    MoverIzquierda();
+    DelayConVerificacion(100);  // ✅ Delay con verificación de apagado
+  }
+  else if (enemigo_frontal_der) {
+    MoverDerecha();
+    DelayConVerificacion(100);  // ✅ Delay con verificación de apagado
+  }
+  else if (enemigo_lat_izq) {
+    MoverIzquierda();
+    DelayConVerificacion(150);  // ✅ Delay con verificación de apagado
+  }
+  else if (enemigo_lat_der) {
+    MoverDerecha();
+    DelayConVerificacion(150);  // ✅ Delay con verificación de apagado
+  }
+  else {
+    MoverAdelante();
+    DelayConVerificacion(100);  // ✅ Delay con verificación de apagado
+    Detenerse();
+    DelayConVerificacion(50);   // ✅ Delay con verificación de apagado
+  }
+}
+
+// Configuracion inicial del robot
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(115200);
+  delay(2000);
+  
+  Serial.println("=== BIGBOY ESP32 INICIANDO ===");
+  Serial.println("🔧 GPIO36 configurado como INPUT (necesita pullup externo)");
+  Serial.println("📱 Presiona el control remoto en GPIO14 para activar");
+  
+  // Configurar sensores de piso
+  pinMode(PinSensor_Piso_Izquierdo, INPUT);
+  pinMode(PinSensor_Piso_Derecho, INPUT);
+  
+  // Configurar sensores de enemigos
+  pinMode(PinSensor_Frontal_Izquierdo, INPUT);
+  pinMode(PinSensor_Frontal_Central, INPUT);
+  pinMode(PinSensor_Frontal_Derecho, INPUT);
+  pinMode(PinSensor_Lateral_Izquierdo, INPUT);
+  pinMode(PinSensor_Lateral_Derecho, INPUT);
+  
+  // Configurar control remoto y DIPs  
+  pinMode(Pin_Control_Remoto, INPUT_PULLUP);  
+  pinMode(Pin_DIP1, INPUT_PULLUP);          
+  pinMode(Pin_DIP2, INPUT);  // ⚠️ GPIO36 - SOLO INPUT (necesita resistencia pullup externa)
+  pinMode(Pin_DIP3, INPUT_PULLUP);
+
+
+  // Configurar motores
+  pinMode(MotorA_IN1, OUTPUT);
+  pinMode(MotorA_IN2, OUTPUT);
+  pinMode(MotorA_PWM, OUTPUT);
+  pinMode(MotorB_IN1, OUTPUT);
+  pinMode(MotorB_IN2, OUTPUT);
+  pinMode(MotorB_PWM, OUTPUT);
+
+  // Configuracion de PWM para ESP32
+  //esta parte es esencial para el manejo de los motores en el ESP32
+#ifdef ARDUINO_ARCH_ESP32
+  // configurar PWM channels para ESP32
+  ledcSetup(MotorA_Channel, PWM_Freq, PWM_Resolution);
+  ledcAttachPin(MotorA_PWM, MotorA_Channel);
+  ledcSetup(MotorB_Channel, PWM_Freq, PWM_Resolution);
+  ledcAttachPin(MotorB_PWM, MotorB_Channel);
+#endif
+
+
+}
+
+// Bucle principal del robot
+void loop() {
+
+ // Leer estado del control remoto y modo activo
+  bool control_activo = ControlRemotoActivo();
+  int modo_actual = LeerModoActivo();
+  
+  // Debug de estado cada 2 s
+  static unsigned long ultimo_estado = 0;
+  if (millis() - ultimo_estado > 3000) {
+    ultimo_estado = millis();
+    
+    Serial.print("🤖 Estado: ");
+    Serial.print(control_activo ? "ENCENDIDO" : "APAGADO");
+    Serial.print(" | Modo: ");
+    Serial.print(modo_actual);
+    Serial.print(" | Control GPIO14: ");
+    Serial.print(digitalRead(Pin_Control_Remoto) ? "HIGH" : "LOW");
+    Serial.println("");
+    
+    // ✅ DEBUG de DIPs con interpretación
+    bool d1 = digitalRead(Pin_DIP1) == LOW;
+    bool d2 = digitalRead(Pin_DIP2) == HIGH; 
+    bool d3 = digitalRead(Pin_DIP3) == LOW;
+    
+    Serial.print("📌 DIPs - D1:");
+    Serial.print(d1 ? "ON" : "off");
+    Serial.print(" D2:");
+    Serial.print(d2 ? "ON" : "off");
+    Serial.print(" D3:");
+    Serial.print(d3 ? "ON" : "off");
+    Serial.print(" | Interpretación: ");
+    
+    if (d1 && !d2 && !d3) Serial.println("MODO 1 VÁLIDO");
+    else if (!d1 && d2 && !d3) Serial.println("MODO 2 VÁLIDO");
+    else if (!d1 && !d2 && d3) Serial.println("MODO 3 VÁLIDO");
+    else if (!d1 && !d2 && !d3) Serial.println("NINGÚN MODO");
+    else Serial.println("MÚLTIPLES ACTIVOS - ERROR");
+  }
+  
+    // Si el control no está activo, detener el robot
+  if (!control_activo) {
+    Detenerse();
+    return;  
+  }
+  
+  EjecutarModo(modo_actual);
+}
+
+
+// Parte cuando se pueda usar motores a maxima potencia
+// Lectura ultra rápida del sensor
+/// @brief Lee el sensor de forma ultra rápida y normaliza el valor
+/// @param pin El pin del sensor
+/// @return El valor normalizado del sensor en el rango 0-100
+// OPTIMIZACIÓN PARA SENSORES DE PISO - ULTRA RÁPIDO Y PRECISO
+int LeerSensorPisoOptimizado(int pin) {
+  // 2 muestras rápidas sin delay - 0µs entre lecturas
+  long suma = analogRead(pin) + analogRead(pin);
+  long promedio = suma >> 1;  // División por 2 usando bit shift (más rápido)
+  
+  // Normalización directa sin map() (más rápido)
+  long valorNormalizado = ((promedio - Sensor_min) * 100) / (Sensor_max - Sensor_min);
+  return constrain((int)valorNormalizado, 0, 100);
+}
+
+// VERSIÓN SÚPER PRECISA para modo defensivo (sacrifica velocidad por precisión)
+int LeerSensorPisoPreciso(int pin) {
+  // 4 muestras con micro delay para máxima precisión
+  long suma = 0;
+  for(int i = 0; i < 4; i++) {
+    suma += analogRead(pin);
+    delayMicroseconds(50); // Delay mínimo para estabilidad
+  }
+  long promedio = suma >> 2;  // División por 4 usando bit shift
+  
+  long valorNormalizado = ((promedio - Sensor_min) * 100) / (Sensor_max - Sensor_min);
+  return constrain((int)valorNormalizado, 0, 100);
+}
+
+// VERSIÓN HÍPER RÁPIDA para modo súper rápido (1 sola lectura)
+int LeerSensorPisoHiperRapido(int pin) {
+  long lectura = analogRead(pin);
+  long valorNormalizado = ((lectura - Sensor_min) * 100) / (Sensor_max - Sensor_min);
+  return constrain((int)valorNormalizado, 0, 100);
+}
+
+int LeerSensorUltraRapido(int pin) {
+  return LeerSensorPisoOptimizado(pin);  // Usar versión optimizada
+}
+
+
+
+/// Sensores laterales súper rápidos
+/// @brief Controla los movimientos del robot basados en las lecturas de los sensores later
+/// @param sensorizquierdo Valor booleano del sensor izquierdo
+/// @param sensorderecho Valor booleano del sensor derecho
+/// @return void
+void SensoresLateralesSuperRapido(int sensorizquierdo, int sensorderecho) {
+  // Misma lógica que SensoresLaterales pero con velocidad máxima
+  if (sensorizquierdo) {
+    GirarIzquierdaSuperRapido();
+  }
+  else if (sensorderecho) {
+    GirarDerechaSuperRapido();
+   
+  }
+}
+
+/// Sensores frontales súper rápidos
+/// @brief Controla los movimientos del robot basados en las lecturas de los sensores frontales
+/// @param sensorizquierdo Valor booleano del sensor izquierdo
+/// @param sensorcentral Valor booleano del sensor central
+/// @param sensorderecho Valor booleano del sensor derecho
+/// @return void
+void SensoresFrontalesSuperRapido(int sensorizquierdo, int sensorcentral, int sensorderecho) {
+  // Misma lógica que SensoresFrontales pero con velocidad máxima
+  if (sensorcentral) {
+    AtaqueSuperRapido();
+  }
+  else if (sensorizquierdo) {
+    GirarIzquierdaSuperRapido();
+  }
+  else if (sensorderecho) {
+    GirarDerechaSuperRapido();
+  }
+}
+
+// Nuevas funciones de movimiento súper rápidas
+void MoverAdelanteSuperRapido() {
+    // Motor A (derecho) adelante
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Maxima);  // Velocidad máxima
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Maxima);
+  #endif
+    
+    // Motor B (izquierdo) adelante
+    digitalWrite(MotorB_IN1, HIGH);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorB_Channel, Velocidad_Maxima);  // Velocidad máxima
+  #else
+    analogWrite(MotorB_PWM, Velocidad_Maxima);
+  #endif
+}
+void AtaqueSuperRapido() {
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, HIGH);
+    digitalWrite(MotorB_IN1, HIGH);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Maxima);
+    ledcWrite(MotorB_Channel, Velocidad_Maxima);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Maxima);
+    analogWrite(MotorB_PWM, Velocidad_Maxima);
+  #endif
+}
+
+void RetrocederSuperRapido() {
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Maxima);
+    ledcWrite(MotorB_Channel, Velocidad_Maxima);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Maxima);
+    analogWrite(MotorB_PWM, Velocidad_Maxima);
+  #endif
+}
+
+void GirarDerechaSuperRapido() {
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, HIGH);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Maxima);
+    ledcWrite(MotorB_Channel, Velocidad_Maxima);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Maxima);
+    analogWrite(MotorB_PWM, Velocidad_Maxima);
+  #endif
+}
+
+void GirarIzquierdaSuperRapido() {
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, HIGH);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Maxima);
+    ledcWrite(MotorB_Channel, Velocidad_Maxima);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Maxima);
+    analogWrite(MotorB_PWM, Velocidad_Maxima);
+  #endif
+}
+
+/// @brief Modo súper rápido
+/// @return void
+void ModoSuperRapido() {
+  // ✅ VERIFICAR si se debe apagar durante la ejecución
+  if (VerificarApagado()) {
+    Detenerse();
+    return;
+  }
+  
+  // OPTIMIZACIÓN: Modo súper rápido usa hiper velocidad (1 sola lectura)
+  int piso_izq_norm = LeerSensorPisoHiperRapido(PinSensor_Piso_Izquierdo);
+  int piso_der_norm = LeerSensorPisoHiperRapido(PinSensor_Piso_Derecho);
+  
+
+  bool enemigo_frontal_izq = DeteccionEnemigos(PinSensor_Frontal_Izquierdo);
+  bool enemigo_frontal_cen = DeteccionEnemigos(PinSensor_Frontal_Central);
+  bool enemigo_frontal_der = DeteccionEnemigos(PinSensor_Frontal_Derecho);
+  bool enemigo_lat_izq = DeteccionEnemigos(PinSensor_Lateral_Izquierdo);
+  bool enemigo_lat_der = DeteccionEnemigos(PinSensor_Lateral_Derecho);
+
+ 
+  if (piso_izq_norm < Umbral_Deteccion_Blanco || piso_der_norm < Umbral_Deteccion_Blanco) {
+ 
+    if (piso_izq_norm < Umbral_Deteccion_Blanco && piso_der_norm < Umbral_Deteccion_Blanco) {
+      RetrocederSuperRapido();
+      DelayConVerificacion(150);  // ✅ Delay con verificación de apagado
+      GirarDerechaSuperRapido();
+      DelayConVerificacion(100);  // ✅ Delay con verificación de apagado
+    } else if (piso_izq_norm < Umbral_Deteccion_Blanco) {
+      GirarDerechaSuperRapido();
+      DelayConVerificacion(80);   // ✅ Delay con verificación de apagado
+    } else {
+      GirarIzquierdaSuperRapido();
+      DelayConVerificacion(80);   // ✅ Delay con verificación de apagado
+    }
+    return;
+  }
+  
+  if (enemigo_frontal_cen || enemigo_frontal_izq || enemigo_frontal_der) {
+    AtaqueSuperRapido();
+    return; 
+  }
+
+  if (enemigo_lat_izq) {
+    GirarIzquierdaSuperRapido();
+    DelayConVerificacion(50);   // ✅ Delay con verificación de apagado
+    return;
+  }
+  
+  if (enemigo_lat_der) {
+    GirarDerechaSuperRapido();
+    DelayConVerificacion(50);   // ✅ Delay con verificación de apagado
+    return;
+  }
+
+  AtaqueSuperRapido(); 
+}

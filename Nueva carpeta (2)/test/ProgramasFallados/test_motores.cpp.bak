@@ -1,0 +1,348 @@
+#include <Arduino.h>
+
+//Definicion de variables de sensores piso 
+const int PinSensor_Piso_Izquierdo = 4;
+const int PinSensor_Piso_Derecho = 15;
+
+//Definicion de variables de sensores Frontales 
+const int PinSensor_Frontal_Izquierdo = 18;
+const int PinSensor_Frontal_Derecho = 16;
+const int PinSensor_Frontal_Central = 17;
+
+// Definicion de variables de sensores Laterales
+const int PinSensor_Lateral_Izquierdo = 19;
+const int PinSensor_Lateral_Derecho = 21;
+
+//variables de tipos de velocidades
+const int Velocidad_Lenta = 130;
+const int Velocidad_Media = 200;
+const int Velocidad_Rapida = 255;
+
+//Variable de umbral de deteccion de blanco
+const int Umbral_Deteccion_Blanco = 50;
+
+//Variables de manejo de datos 
+
+const int Sensor_min = 200;
+const int Sensor_max = 1500;
+
+
+//Definicion de variable de motores 
+
+// Motor A (Derecho)
+const int MotorA_IN1 = 25;
+const int MotorA_IN2 = 26;
+const int MotorA_PWM = 5;
+
+// PWM channels (ESP32) - usar solo si se compila para ESP32
+#ifdef ARDUINO_ARCH_ESP32
+const int MotorA_Channel = 0;
+const int MotorB_Channel = 1;
+const int PWM_Freq = 5000;
+const int PWM_Resolution = 8; // 8 bits -> 0-255
+#endif
+
+// Motor B (Izquierdo)
+const int MotorB_IN1 = 22;
+const int MotorB_IN2 = 23;
+const int MotorB_PWM = 32;
+
+//Declaracion de Funciones 
+long LeerSensorPromediado(int pin, int muestras, int delayUs);
+long LeerSensorPromediado(int pin, int muestras);
+int LeerSensorNormalizado(int pin, int sensorMin, int sensorMax, int muestras);
+bool EsBlanco(int pin, int sensorMin, int sensorMax, int umbral, int muestras);
+bool DeteccionEnemigos(int sensores);
+void SensoresPiso(int sensorizquierdo, int sensorderecho);
+void MoverAtras();
+void MoverAdelante();
+void Detenerse();
+void AtaqueEnemigo();
+void Retroceder();
+void MoverDerecha();
+void MoverIzquierda();
+
+
+//Funcion de detecciones de blanco 
+
+long LeerSensorPromediado(int pin, int muestras, int delayUs) {
+  long suma = 0;
+  for (int i = 0; i < muestras; i++) {
+    suma += analogRead(pin);
+    delayMicroseconds(delayUs);
+  }
+  return suma / muestras;
+}
+
+
+long LeerSensorPromediado(int pin, int muestras) {
+  return LeerSensorPromediado(pin, muestras, 100);
+}
+
+
+int LeerSensorNormalizado(int pin, int sensorMin, int sensorMax, int muestras) {
+  long promedio = LeerSensorPromediado(pin, muestras, 200);  // Aumenté el delay a 200us
+  long valorNormalizado = map(promedio, sensorMin, sensorMax, 0, 100);
+  return constrain((int)valorNormalizado, 0, 100);
+}
+
+
+bool EsBlanco(int pin, int sensorMin, int sensorMax, int umbral, int muestras) {
+  int v = LeerSensorNormalizado(pin, sensorMin, sensorMax, muestras);
+  return v < umbral; 
+}
+
+//Funciones de deteccion enemigos 
+bool DeteccionEnemigos(int sensores)
+{
+  return digitalRead(sensores)==HIGH;
+}
+
+// Movimientos de acuerdo a los sensores 
+
+void SensoresPiso(int sensorizquierdo, int sensorderecho)
+{
+  // sensorizquierdo y sensorderecho son valores normalizados 0..100
+    if (sensorizquierdo >= Umbral_Deteccion_Blanco && sensorderecho >= Umbral_Deteccion_Blanco) {
+        MoverAdelante();
+    }
+    else if (sensorizquierdo < Umbral_Deteccion_Blanco ) {
+        MoverAtras();
+    }
+    else if (sensorderecho < Umbral_Deteccion_Blanco) {
+        MoverAtras();
+    }
+
+
+}
+void SensoresLaterales(int sensorizquierdo, int sensorderecho)
+{
+  // sensorizquierdo y sensorderecho son valores normalizados 0..100
+  if (sensorizquierdo  ) {
+    MoverIzquierda();
+  }
+   else if (sensorderecho) {
+    MoverDerecha();
+  }
+ 
+}
+
+void SensoresFrontales(int sensorizquierdo, int sensorcentral, int sensorderecho)
+{
+  // sensorizquierdo, sensorcentral y sensorderecho son valores booleanos
+  if (sensorcentral ) {
+    AtaqueEnemigo();
+  }
+   else if (sensorizquierdo) {
+    MoverIzquierda();
+  }
+   else if (sensorderecho) {
+    MoverDerecha();
+  }
+ 
+}
+//Movimientos de los motores 
+void MoverAtras() {
+    // Motor A (derecho) atrás
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW );
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+  #endif
+    
+    // Motor B (izquierdo) atrás
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+void MoverAdelante() {
+    // Motor A (derecho) adelante
+    digitalWrite(MotorA_IN1, LOW );
+    digitalWrite(MotorA_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+  #endif
+    
+    // Motor B (izquierdo) adelante
+    digitalWrite(MotorB_IN1, HIGH);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+void Detenerse() {
+    // Detener ambos motores
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, 0);
+    ledcWrite(MotorB_Channel, 0);
+  #else
+    analogWrite(MotorA_PWM, 0);
+    analogWrite(MotorB_PWM, 0);
+  #endif
+}
+
+void AtaqueEnemigo() {
+    // Avanzar con fuerza para empujar al enemigo
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, HIGH);
+    digitalWrite(MotorB_IN1, HIGH);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Rapida);
+    ledcWrite(MotorB_Channel, Velocidad_Rapida);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Rapida);
+    analogWrite(MotorB_PWM, Velocidad_Rapida);
+  #endif
+}
+
+void Retroceder() {
+    // Retroceder con mayor velocidad para escapar rápidamente
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+void MoverDerecha() {
+    // Girar a la derecha: motor izquierdo adelante, motor derecho atrás
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, HIGH);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+void MoverIzquierda() {
+    // Girar a la izquierda: motor izquierdo atrás, motor derecho adelante
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, HIGH);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(115200);
+ pinMode(PinSensor_Piso_Izquierdo, INPUT);
+ pinMode(PinSensor_Piso_Derecho, INPUT);
+
+    pinMode(MotorA_IN1, OUTPUT);
+    pinMode(MotorA_IN2, OUTPUT);
+    pinMode(MotorA_PWM, OUTPUT);
+    pinMode(MotorB_IN1, OUTPUT);
+    pinMode(MotorB_IN2, OUTPUT);
+    pinMode(MotorB_PWM, OUTPUT);
+
+#ifdef ARDUINO_ARCH_ESP32
+  // configurar PWM channels para ESP32
+  ledcSetup(MotorA_Channel, PWM_Freq, PWM_Resolution);
+  ledcAttachPin(MotorA_PWM, MotorA_Channel);
+  ledcSetup(MotorB_Channel, PWM_Freq, PWM_Resolution);
+  ledcAttachPin(MotorB_PWM, MotorB_Channel);
+#endif
+
+ 
+}
+
+void loop() {
+
+    int piso_izq_norm = LeerSensorNormalizado(PinSensor_Piso_Izquierdo, Sensor_min, Sensor_max, 10);
+  int piso_der_norm = LeerSensorNormalizado(PinSensor_Piso_Derecho, Sensor_min, Sensor_max, 10);
+  bool enemigo_frontal_izq = DeteccionEnemigos(PinSensor_Frontal_Izquierdo);
+  bool enemigo_frontal_cen = DeteccionEnemigos(PinSensor_Frontal_Central);
+  bool enemigo_frontal_der = DeteccionEnemigos(PinSensor_Frontal_Derecho);
+  bool enemigo_lat_izq = DeteccionEnemigos(PinSensor_Lateral_Izquierdo);
+  bool enemigo_lat_der = DeteccionEnemigos(PinSensor_Lateral_Derecho);
+
+
+  if (piso_izq_norm < Umbral_Deteccion_Blanco || piso_der_norm < Umbral_Deteccion_Blanco) {
+
+    SensoresPiso(piso_izq_norm, piso_der_norm); 
+  }
+  
+  else if (enemigo_frontal_cen || enemigo_frontal_izq || enemigo_frontal_der) {
+
+    SensoresFrontales(enemigo_frontal_izq, enemigo_frontal_cen, enemigo_frontal_der);
+  }
+  
+  
+  else if (enemigo_lat_izq || enemigo_lat_der) {
+   
+    SensoresLaterales(enemigo_lat_izq, enemigo_lat_der);
+  }
+  // put your main code here, to run repeatedly:
+//   int LecturaNormalizada_Izquierdo = LeerSensorNormalizado(PinSensor_Piso_Izquierdo, Sensor_min, Sensor_max, 10);
+//   int LecturaNormalizada_Derecho = LeerSensorNormalizado(PinSensor_Piso_Derecho, Sensor_min, Sensor_max, 10);
+
+//   bool LecturasLateral_izquierdo= DeteccionEnemigos(PinSensor_Lateral_Izquierdo);
+//   bool LecturasLateral_derecho= DeteccionEnemigos(PinSensor_Lateral_Derecho);
+
+//   SensoresLaterales(LecturasLateral_izquierdo, LecturasLateral_derecho);
+
+//   ========== VISUALIZACIÓN DE SENSORES DE PISO ==========
+//   static unsigned long ultimo_debug = 0;
+//   if (millis() - ultimo_debug > 300) {  // Mostrar cada 300ms
+//     ultimo_debug = millis();
+    
+//     // Lecturas brutas (sin normalizar)
+//     int lectura_bruta_izq = analogRead(PinSensor_Piso_Izquierdo);
+//     int lectura_bruta_der = analogRead(PinSensor_Piso_Derecho);
+    
+//     Serial.println("========== SENSORES DE PISO ==========");
+//     Serial.print("IZQUIERDO - Bruto: "); Serial.print(lectura_bruta_izq);
+//     Serial.print(" | Normalizado: "); Serial.print(LecturaNormalizada_Izquierdo); Serial.print("%");
+//     Serial.println(LecturaNormalizada_Izquierdo < Umbral_Deteccion_Blanco ? " [BLANCO]" : " [NEGRO]");
+    
+//     Serial.print("DERECHO  - Bruto: "); Serial.print(lectura_bruta_der);
+//     Serial.print(" | Normalizado: "); Serial.print(LecturaNormalizada_Derecho); Serial.print("%");
+//     Serial.println(LecturaNormalizada_Derecho < Umbral_Deteccion_Blanco ? " [BLANCO]" : " [NEGRO]");
+    
+//     Serial.print("Estado: ");
+//     if (LecturaNormalizada_Izquierdo < Umbral_Deteccion_Blanco || LecturaNormalizada_Derecho < Umbral_Deteccion_Blanco) {
+//       Serial.println("BORDE DETECTADO");
+//     } else {
+//       Serial.println("ÁREA DE COMBATE");
+//     }
+//     Serial.println("=====================================");
+//   }
+
+//   SensoresPiso(LecturaNormalizada_Izquierdo, LecturaNormalizada_Derecho);
+
+}

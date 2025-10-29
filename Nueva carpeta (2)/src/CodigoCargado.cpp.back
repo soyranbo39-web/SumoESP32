@@ -1,0 +1,638 @@
+#include <Arduino.h>
+const int PinSensor_Piso_Izquierdo = 4;
+const int PinSensor_Piso_Derecho = 15;
+
+const int PinSensor_Frontal_Izquierdo =  19;
+const int PinSensor_Frontal_Central = 16;
+const int PinSensor_Frontal_Derecho = 17;
+
+const int PinSensor_Lateral_Izquierdo = 18;
+const int PinSensor_Lateral_Derecho = 21;
+const int MotorA_IN1 = 25;
+const int MotorA_IN2 = 26;
+const int MotorA_PWM = 5;
+
+const int MotorB_IN1 = 22;
+const int MotorB_IN2 = 23;
+const int MotorB_PWM = 27;
+
+const int PWM_FREQ = 1000;
+const int PWM_RESOLUTION = 8;
+const int CANAL_MOTOR_A = 0;
+const int CANAL_MOTOR_B = 1;
+
+const int Velocidad_Muy_Lenta = 80;
+const int Velocidad_Lenta = 120;
+const int Velocidad_Media = 120;
+const int Velocidad_Maxima = 200;
+float Factor_Velocidad_Global = 1.0;
+
+const int Pin_Control_Remoto = 14;
+const int Pin_DIP1 = 35;
+const int Pin_DIP3 = 39;
+
+bool robot_encendido = false;
+int ultimo_estado_boton = HIGH;
+unsigned long ultimo_cambio_boton = 0;
+const unsigned long debounce_delay = 300;
+
+void MoverAtras();
+void MoverAdelante();
+void MoverIzquierda();
+void MoverDerecha();
+void Detenerse();
+void AtaqueEnemigo();
+void PruebaVelocidades();
+void busqueda();
+bool Blanco(int sensorpiso);
+bool DeteccionEnemigo(int sensor);
+
+bool ControlRemotoActivo();
+bool VerificarApagado();
+void DelayConVerificacion(unsigned long ms);
+void MoverAdelantemedio();
+
+void MoverAdelanteVelocidadLenta() {
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, HIGH);
+  delay(30);
+  
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(70);
+}
+
+void MoverAdelanteVelocidadMedia() {
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, HIGH);
+  delay(50);
+  
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(50);
+}
+
+void MoverAdelanteVelocidadRapida() {
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, HIGH);
+  delay(80);
+  
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(20);
+}
+
+void MoverAdelantemedio() {
+  MoverAdelanteVelocidadMedia();
+}
+void MoverAtrasRapido() {
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, HIGH);
+  ledcWrite(CANAL_MOTOR_A, Velocidad_Maxima);
+
+  digitalWrite(MotorB_IN1, HIGH);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_B, Velocidad_Maxima);
+}
+void MoverAdelante() {
+  int velocidad_aplicada = (int)(Velocidad_Media * Factor_Velocidad_Global);
+  
+  Serial.print("MoverAdelante() - Aplicando velocidad: "); Serial.println(velocidad_aplicada);
+  
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_A, velocidad_aplicada);
+
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, HIGH);
+  ledcWrite(CANAL_MOTOR_B, velocidad_aplicada);
+}
+void MoverAtras() {
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_A, Velocidad_Media);
+
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, HIGH);
+  ledcWrite(CANAL_MOTOR_B, Velocidad_Media);
+}
+
+void MoverIzquierdaMedio() {
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_A, 0);
+  
+  digitalWrite(MotorB_IN1, HIGH);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_B, Velocidad_Media);
+}
+void MoverDerechaMedio() {
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_A, Velocidad_Media);
+  
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_B, 0);
+}
+
+
+void MoverIzquierdaLento() {
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_A, 0);
+  
+  digitalWrite(MotorB_IN1, HIGH);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_B, Velocidad_Lenta);
+}
+void MoverDerechaLento() {
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_A, Velocidad_Lenta);
+  
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_B, 0);
+}
+
+void MoverDerecha() {
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_A, Velocidad_Lenta);
+  
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_B, 0);
+}
+
+void MoverIzquierda() {
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_A, 0);
+  
+  digitalWrite(MotorB_IN1, HIGH);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_B, Velocidad_Lenta);
+}
+
+void Detenerse() {
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_A, 0);
+  
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_B, 0);
+}
+
+void AtaqueEnemigo() {
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  ledcWrite(CANAL_MOTOR_A, Velocidad_Maxima);
+  
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, HIGH);
+  ledcWrite(CANAL_MOTOR_B, Velocidad_Maxima);
+}
+void IzquierdaVelocidad(int porcentaje_velocidad) {
+  if (porcentaje_velocidad <= 0) {
+    Detenerse();
+    return;
+  }
+  if (porcentaje_velocidad >= 100) {
+ digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, HIGH);
+  digitalWrite(MotorB_IN2, LOW);
+    return;
+  }
+  int tiempo_on = porcentaje_velocidad;
+  int tiempo_off = 100 - porcentaje_velocidad;
+  
+ digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, HIGH);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(tiempo_on);
+  
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(tiempo_off);
+}
+void DerechoVelocidad(int porcentaje_velocidad) {
+  if (porcentaje_velocidad <= 0) {
+    Detenerse();
+    return;
+  }
+  if (porcentaje_velocidad >= 100) {
+ digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+    return;
+  }
+  int tiempo_on = porcentaje_velocidad;
+  int tiempo_off = 100 - porcentaje_velocidad;
+  
+ digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(tiempo_on);
+  
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(tiempo_off);
+}
+void RetrocederVelocidad(int porcentaje_velocidad) {
+  if (porcentaje_velocidad <= 0) {
+    Detenerse();
+    return;
+  }
+  if (porcentaje_velocidad >= 100) {
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, HIGH);
+  digitalWrite(MotorB_IN1, HIGH);
+  digitalWrite(MotorB_IN2, LOW);
+    return;
+  }
+  int tiempo_on = porcentaje_velocidad;
+  int tiempo_off = 100 - porcentaje_velocidad;
+  
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, HIGH);
+  digitalWrite(MotorB_IN1, HIGH);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(tiempo_on);
+  
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(tiempo_off);
+}
+void Atacar(int porcentaje_velocidad) {
+  if (porcentaje_velocidad <= 0) {
+    Detenerse();
+    return;
+  }
+  if (porcentaje_velocidad >= 100) {
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+    return;
+  }
+  int tiempo_on = porcentaje_velocidad;
+  int tiempo_off = 100 - porcentaje_velocidad;
+  
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, HIGH);
+  delay(tiempo_on);
+  
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(tiempo_off);
+}
+void MoverAdelanteConVelocidad(int porcentaje_velocidad) {
+  if (porcentaje_velocidad <= 0) {
+    Detenerse();
+    return;
+  }
+  if (porcentaje_velocidad >= 100) {
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+    return;
+  }
+  
+  int tiempo_on = porcentaje_velocidad;
+  int tiempo_off = 100 - porcentaje_velocidad;
+  
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, HIGH);
+  delay(tiempo_on);
+  
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  delay(tiempo_off);
+  
+  Serial.print("Velocidad: "); Serial.print(porcentaje_velocidad); 
+  Serial.print("% (ON:"); Serial.print(tiempo_on); 
+  Serial.print("ms OFF:"); Serial.print(tiempo_off); Serial.println("ms)");
+}
+
+void busqueda() {
+  Serial.println("MODO BÚSQUEDA - Movimiento adelante continuo al 70%");
+  
+  MoverAdelanteConVelocidad(70);
+}
+
+void PruebaVelocidades() {
+  Serial.println("INICIANDO PRUEBA DE VELOCIDADES PWM");
+  
+  Serial.println("Velocidad 50/255 (20%)");
+  digitalWrite(MotorA_IN1, HIGH); digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);  digitalWrite(MotorB_IN2, HIGH);
+  ledcWrite(CANAL_MOTOR_A, 50);
+  ledcWrite(CANAL_MOTOR_B, 50);
+  delay(2000);
+  
+  Serial.println("Velocidad 100/255 (39%)");
+  ledcWrite(CANAL_MOTOR_A, 100);
+  ledcWrite(CANAL_MOTOR_B, 100);
+  delay(2000);
+  
+  Serial.println("Velocidad 150/255 (59%)");
+  ledcWrite(CANAL_MOTOR_A, 150);
+  ledcWrite(CANAL_MOTOR_B, 150);
+  delay(2000);
+  
+  Serial.println("Velocidad 200/255 (78%)");
+  ledcWrite(CANAL_MOTOR_A, 200);
+  ledcWrite(CANAL_MOTOR_B, 200);
+  delay(2000);
+  
+  Serial.println("Velocidad 255/255 (100%)");
+  ledcWrite(CANAL_MOTOR_A, 255);
+  ledcWrite(CANAL_MOTOR_B, 255);
+  delay(2000);
+  
+  Serial.println("Deteniendo motores");
+  Detenerse();
+  Serial.println("PRUEBA COMPLETADA");
+}
+
+bool ControlRemotoActivo() {
+  int estado = digitalRead(Pin_Control_Remoto);
+  if (estado == LOW && ultimo_estado_boton == HIGH) {
+    if (millis() - ultimo_cambio_boton > debounce_delay) {
+      robot_encendido = !robot_encendido;
+      ultimo_cambio_boton = millis();
+    }
+  }
+  ultimo_estado_boton = estado;
+  return robot_encendido;
+}
+
+bool VerificarApagado() {
+  int estado = digitalRead(Pin_Control_Remoto);
+  if (estado == LOW && robot_encendido) {
+    if (millis() - ultimo_cambio_boton > debounce_delay) {
+      robot_encendido = false;
+      ultimo_cambio_boton = millis();
+      return true;
+    }
+  }
+  return false;
+}
+
+void DelayConVerificacion(unsigned long ms) {
+  unsigned long inicio = millis();
+  while (millis() - inicio < ms) {
+    if (VerificarApagado()) {
+      Detenerse();
+      return;
+    }
+    delay(10);
+  }
+}
+
+void Sensores_piso(bool sensorpisoizquierda, bool sensorpisoderecha)
+{
+  if (sensorpisoderecha && sensorpisoizquierda)
+  {
+ MoverAtrasRapido();
+    delay(400); 
+     DerechoVelocidad(100);
+    delay(200);
+   
+
+    return;
+  }
+
+ else  if (sensorpisoderecha) {
+   MoverAtrasRapido();
+    delay(120);
+    
+    DerechoVelocidad(100);
+    delay(300);
+    IzquierdaVelocidad(100);
+    delay(300);
+    return;
+  }
+  else if (sensorpisoizquierda) {
+    MoverAtrasRapido();
+    delay(120);
+
+    IzquierdaVelocidad(100);
+    delay(300);
+    return;
+  }
+
+}
+
+void Ataque(bool sensorfrontalderecho, bool sensorfrontalcentral, bool sensorfrontalizquierdo)
+{
+  if (sensorfrontalcentral)
+  {
+       AtaqueEnemigo();
+    return;
+  }
+  else if (sensorfrontalderecho){
+    AtaqueEnemigo();
+    delay(500);
+    return;
+  }
+
+  else if (sensorfrontalizquierdo){
+     AtaqueEnemigo();
+    return;
+  }
+
+  
+
+}
+
+void Movimientoslaterales(bool sensorlateralesderecho, bool sensorlateralizquierdo)
+{
+  if (sensorlateralesderecho)
+  {
+    MoverAdelante();
+    return;
+  }
+  else if (sensorlateralizquierdo)
+  {
+  DerechoVelocidad(50); 
+    return;
+  }
+}
+
+#ifndef BLANCO
+#define BLANCO 800
+#endif
+
+int lecturaFiltrada(int pin) {
+  int a = analogRead(pin);
+  int b = analogRead(pin);
+  int c = analogRead(pin);
+  int promedio = (a + b + c) / 3;
+  return promedio;
+}
+bool Blanco(int sensorpiso)
+{
+  return analogRead(sensorpiso) < BLANCO;
+}
+
+bool DeteccionEnemigo(int sensor)
+{
+  return (digitalRead(sensor) == HIGH);
+}
+
+void ModoPisoPrioritarioA() {
+  if (VerificarApagado()) { Detenerse(); return; }
+
+  bool pisoIzq = Blanco(PinSensor_Piso_Izquierdo);
+  bool pisoDer = Blanco(PinSensor_Piso_Derecho);
+  if (pisoIzq || pisoDer) {
+    Sensores_piso(pisoIzq, pisoDer);
+    return;
+  }
+
+  bool enemigoCentro = DeteccionEnemigo(PinSensor_Frontal_Central);
+  if (enemigoCentro) { AtaqueEnemigo(); return; }
+  bool enemigoIzq = DeteccionEnemigo(PinSensor_Frontal_Izquierdo);
+  bool enemigoDer = DeteccionEnemigo(PinSensor_Frontal_Derecho);
+    if (enemigoIzq) { MoverIzquierda(); return; }
+  if (enemigoDer) { MoverDerecha(); return; }
+
+  bool enemigoLatIzq = DeteccionEnemigo(PinSensor_Lateral_Izquierdo);
+  bool enemigoLatDer = DeteccionEnemigo(PinSensor_Lateral_Derecho);
+  if (enemigoLatIzq || enemigoLatDer) {
+    Movimientoslaterales(enemigoLatDer, enemigoLatIzq);
+    return;
+  }
+
+}
+
+void ModoPisoPrioritarioB() {
+  if (VerificarApagado()) { Detenerse(); return; }
+
+  bool pisoIzq = Blanco(PinSensor_Piso_Izquierdo);
+  bool pisoDer = Blanco(PinSensor_Piso_Derecho);
+  if (pisoIzq || pisoDer) {
+ MoverAtras();
+    if (pisoIzq && pisoDer) {
+      AtaqueEnemigo();
+      MoverDerecha();
+    } else if (pisoDer) {
+      MoverIzquierda();
+    } else if (pisoIzq) {
+      MoverDerecha();
+    }
+    DelayConVerificacion(350);
+    return;
+  }
+
+  bool enemigoCentro = DeteccionEnemigo(PinSensor_Frontal_Central);
+  bool enemigoIzq = DeteccionEnemigo(PinSensor_Frontal_Izquierdo);
+  bool enemigoDer = DeteccionEnemigo(PinSensor_Frontal_Derecho);
+  bool enemigoLatIzq = DeteccionEnemigo(PinSensor_Lateral_Izquierdo);
+  bool enemigoLatDer = DeteccionEnemigo(PinSensor_Lateral_Derecho);
+  if (enemigoLatIzq || enemigoLatDer) {
+    Movimientoslaterales(enemigoLatDer, enemigoLatIzq);
+    return;
+  }
+  if (enemigoCentro) { AtaqueEnemigo(); return; }
+  if (enemigoIzq) { MoverIzquierda(); return; }
+  if (enemigoDer) { MoverDerecha(); return; }
+}
+
+
+
+void setup() {
+  Serial.begin(115200);
+  delay(200);
+
+  pinMode(PinSensor_Piso_Izquierdo, INPUT);
+  pinMode(PinSensor_Piso_Derecho, INPUT);
+
+  pinMode(PinSensor_Frontal_Izquierdo, INPUT);
+  pinMode(PinSensor_Frontal_Central, INPUT);
+  pinMode(PinSensor_Frontal_Derecho, INPUT);
+  pinMode(PinSensor_Lateral_Izquierdo, INPUT);
+  pinMode(PinSensor_Lateral_Derecho, INPUT);
+
+  pinMode(Pin_Control_Remoto, INPUT_PULLUP);
+  pinMode(Pin_DIP1, INPUT_PULLUP);
+  pinMode(Pin_DIP3, INPUT_PULLUP);
+
+  pinMode(MotorA_IN1, OUTPUT);
+  pinMode(MotorA_IN2, OUTPUT);
+  pinMode(MotorB_IN1, OUTPUT);
+  pinMode(MotorB_IN2, OUTPUT);
+  
+ ledcSetup(CANAL_MOTOR_A, PWM_FREQ, PWM_RESOLUTION);
+  ledcSetup(CANAL_MOTOR_B, PWM_FREQ, PWM_RESOLUTION);
+  ledcAttachPin(MotorA_PWM, CANAL_MOTOR_A);
+  ledcAttachPin(MotorB_PWM, CANAL_MOTOR_B);
+  
+
+}
+
+void loop() {
+
+  bool activo = ControlRemotoActivo();
+  if (!activo) {
+    Detenerse();
+    delay(100);
+    return;
+  }
+  
+  if (analogRead(PinSensor_Piso_Izquierdo) < BLANCO || analogRead(PinSensor_Piso_Derecho) < BLANCO) {
+    Serial.println("PISO DETECTADO - CORTE INMEDIATO");
+    Detenerse();
+    bool PisoIzq = analogRead(PinSensor_Piso_Izquierdo) < BLANCO;
+    bool PisoDer = analogRead(PinSensor_Piso_Derecho) < BLANCO;
+    Sensores_piso(PisoIzq, PisoDer);
+    return;
+  }
+
+  bool FrontalDer = DeteccionEnemigo(PinSensor_Frontal_Derecho);
+  bool FrontalIzq = DeteccionEnemigo(PinSensor_Frontal_Izquierdo);
+  bool Central = DeteccionEnemigo(PinSensor_Frontal_Central);
+  
+  if(FrontalDer || Central || FrontalIzq){
+    Ataque(FrontalDer, Central, FrontalIzq);
+    return;
+  }
+  
+  MoverAdelanteConVelocidad(30);
+
+}

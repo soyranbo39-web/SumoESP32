@@ -1,0 +1,147 @@
+#include <Arduino.h>
+
+// ------------------------------
+// CONFIGURACIÓN DE PINES
+// ------------------------------
+
+// Sensores de piso (ajusta si no coinciden)
+const int sensorPisoIzquierdo = 4;  
+const int sensorPisoDerecho  = 15;   
+
+// Motor B (Izquierdo)
+const int MotorB_IN1 = 22;
+const int MotorB_IN2 = 23;
+const int MotorB_PWM = 33;
+
+// Motor A (Derecho)
+const int MotorA_IN1 = 25;
+const int MotorA_IN2 = 26;
+const int MotorA_PWM = 5;
+
+// ------------------------------
+// CONFIGURACIÓN DE PWM
+// ------------------------------
+const int canalMotorA = 0;
+const int canalMotorB = 1;
+const int frecuenciaPWM = 5000;
+const int resolucionPWM = 8; // valores de 0 a 255
+
+
+int limiteBlanco = 400;  // ajusta según tu sensor (blanco < 400 normalmente)
+int velocidadBase = 180; // velocidad normal
+int velocidadGiro = 150;
+int velocidadRetroceso = 200;
+
+
+void detenerMotores() {
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(canalMotorA, 0);
+  ledcWrite(canalMotorB, 0);
+}
+
+void moverAdelante() {
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, HIGH);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(canalMotorA, velocidadBase);
+  ledcWrite(canalMotorB, velocidadBase);
+}
+
+void retroceder() {
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, HIGH);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, HIGH);
+  ledcWrite(canalMotorA, velocidadRetroceso);
+  ledcWrite(canalMotorB, velocidadRetroceso);
+}
+
+void girarIzquierda() {
+  digitalWrite(MotorA_IN1, LOW);
+  digitalWrite(MotorA_IN2, HIGH);
+  digitalWrite(MotorB_IN1, HIGH);
+  digitalWrite(MotorB_IN2, LOW);
+  ledcWrite(canalMotorA, velocidadGiro);
+  ledcWrite(canalMotorB, velocidadGiro);
+}
+
+void girarDerecha() {
+  digitalWrite(MotorA_IN1, HIGH);
+  digitalWrite(MotorA_IN2, LOW);
+  digitalWrite(MotorB_IN1, LOW);
+  digitalWrite(MotorB_IN2, HIGH);
+  ledcWrite(canalMotorA, velocidadGiro);
+  ledcWrite(canalMotorB, velocidadGiro);
+}
+
+// ------------------------------
+// CONFIGURACIÓN INICIAL
+// ------------------------------
+void setup() {
+  Serial.begin(115200);
+  Serial.println("\n--- PRUEBA DE SENSORES DE PISO ---");
+
+  // Motores
+  pinMode(MotorA_IN1, OUTPUT);
+  pinMode(MotorA_IN2, OUTPUT);
+  pinMode(MotorB_IN1, OUTPUT);
+  pinMode(MotorB_IN2, OUTPUT);
+
+  ledcSetup(canalMotorA, frecuenciaPWM, resolucionPWM);
+  ledcSetup(canalMotorB, frecuenciaPWM, resolucionPWM);
+  ledcAttachPin(MotorA_PWM, canalMotorA);
+  ledcAttachPin(MotorB_PWM, canalMotorB);
+
+  // Sensores
+  pinMode(sensorPisoIzquierdo, INPUT);
+  pinMode(sensorPisoDerecho, INPUT);
+
+  detenerMotores();
+  delay(1000);
+}
+
+// ------------------------------
+// BUCLE PRINCIPAL
+// ------------------------------
+void loop() {
+  int lecturaIzq = analogRead(sensorPisoIzquierdo);
+  int lecturaDer = analogRead(sensorPisoDerecho);
+
+  Serial.print("Piso Izq: ");
+  Serial.print(lecturaIzq);
+  Serial.print(" | Piso Der: ");
+  Serial.print(lecturaDer);
+  Serial.print("  -> ");
+
+  // Lógica básica de línea blanca
+  bool blancoIzq = (lecturaIzq < limiteBlanco);
+  bool blancoDer = (lecturaDer < limiteBlanco);
+
+  if (blancoIzq && blancoDer) {
+    Serial.println("Ambos detectan blanco - Retrocediendo");
+    retroceder();
+    delay(400);
+    girarDerecha();
+    delay(300);
+  } 
+  else if (blancoIzq) {
+    Serial.println("Izquierdo detecta blanco - Girando derecha");
+    girarDerecha();
+    delay(200);
+  } 
+  else if (blancoDer) {
+    Serial.println("Derecho detecta blanco - Girando izquierda");
+    girarIzquierda();
+    delay(200);
+  } 
+  else {
+    Serial.println("Negro detectado - Avanzando");
+    moverAdelante();
+  }
+
+  delay(100);
+}

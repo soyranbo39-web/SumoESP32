@@ -1,0 +1,460 @@
+#include <Arduino.h>
+
+bool DeteccionEnemigos(int sensores);
+bool DetectaBordePisoIzquierdo();
+bool DetectaBordePisoDerecho();
+bool HayPeligroDeCaida();
+void ManejarDeteccionPiso();
+void MoverAtras();
+void MoverAdelante();
+void Detenerse();
+void AtaqueEnemigo();
+void MoverDerecha();
+void MoverIzquierda();
+bool ControlRemotoActivo();
+bool VerificarApagado();
+void DelayConVerificacion(unsigned long ms);
+int LeerModoActivo();
+void EjecutarModo(int modo);
+void ModoSoloPiso();
+void ModoSumoCompleto();
+int LeerSensorPisoOptimizado(int pin);
+
+const int PinSensor_Piso_Izquierdo = 4;
+const int PinSensor_Piso_Derecho = 15;
+
+const int PinSensor_Frontal_Izquierdo = 18;
+const int PinSensor_Frontal_Derecho = 16;
+const int PinSensor_Frontal_Central = 17;
+const int PinSensor_Lateral_Izquierdo = 19;
+const int PinSensor_Lateral_Derecho = 21;
+
+const int MotorA_IN1 = 25;
+const int MotorA_IN2 = 26;
+const int MotorA_PWM = 5;
+const int MotorB_IN1 = 22;
+const int MotorB_IN2 = 23;
+const int MotorB_PWM = 27;
+
+const int Pin_Control_Remoto = 14;
+const int Pin_DIP1 = 35;
+const int Pin_DIP3 = 39;
+const int Velocidad_Lenta = 150;
+const int Velocidad_Maxima = 255;
+const int Umbral_Deteccion_Blanco = 70;
+const int Sensor_min = 200;
+const int Sensor_max = 1500;
+
+#ifdef ARDUINO_ARCH_ESP32
+const int MotorA_Channel = 0;
+const int MotorB_Channel = 1;
+const int PWM_Freq = 5000;
+const int PWM_Resolution = 8; 
+#endif
+
+bool robot_encendido = false;
+bool ultimo_estado_boton = HIGH;
+unsigned long ultimo_cambio_boton = 0;
+const unsigned long debounce_delay = 50;
+
+volatile bool piso_cambio_detectado = false;
+unsigned long ultima_lectura_piso = 0;
+const unsigned long intervalo_piso = 10;
+int cache_piso_izq = 100;
+int cache_piso_der = 100;
+unsigned long ultima_lectura_cache = 0;
+
+int LeerSensorPisoOptimizado(int pin) {
+  long suma = analogRead(pin) + analogRead(pin);
+  long promedio = suma >> 1;
+  long valorNormalizado = ((promedio - Sensor_min) * 100) / (Sensor_max - Sensor_min);
+  return constrain((int)valorNormalizado, 0, 100);
+}
+
+bool LeerPisoConCache() {
+  unsigned long ahora = millis();
+  if (ahora - ultima_lectura_cache > intervalo_piso) {
+    cache_piso_izq = LeerSensorPisoOptimizado(PinSensor_Piso_Izquierdo);
+    cache_piso_der = LeerSensorPisoOptimizado(PinSensor_Piso_Derecho);
+    ultima_lectura_cache = ahora;
+  }
+  return (cache_piso_izq < Umbral_Deteccion_Blanco || cache_piso_der < Umbral_Deteccion_Blanco);
+}
+
+bool DetectaBordePisoIzquierdo() {
+  int valor_normalizado = LeerSensorPisoOptimizado(PinSensor_Piso_Izquierdo);
+  return valor_normalizado < Umbral_Deteccion_Blanco;
+}
+
+bool DetectaBordePisoDerecho() {
+  int valor_normalizado = LeerSensorPisoOptimizado(PinSensor_Piso_Derecho);
+  return valor_normalizado < Umbral_Deteccion_Blanco;
+}
+
+bool HayPeligroDeCaida() {
+  return DetectaBordePisoIzquierdo() || DetectaBordePisoDerecho();
+}
+
+bool DeteccionEnemigos(int sensores) {
+  return digitalRead(sensores) == HIGH;
+}
+
+void ManejarDeteccionPiso() {
+  if (VerificarApagado()) {
+    Detenerse();
+    return;
+  }
+  
+  bool peligro_izq = DetectaBordePisoIzquierdo();
+  bool peligro_der = DetectaBordePisoDerecho();
+  
+  if (peligro_izq && peligro_der) {
+    Serial.println(" retroceder");
+    MoverAtras();
+    DelayConVerificacion(400);
+    MoverDerecha(); 
+    DelayConVerificacion(300);
+  }
+  else if (peligro_izq) {
+    Serial.println(" Borde izquierdo");
+    MoverDerecha();
+    DelayConVerificacion(300);
+  }
+  else if (peligro_der) {
+    Serial.println(" Borde derecho");
+    MoverIzquierda();
+    DelayConVerificacion(300);
+  }
+}
+
+// ==================== FUNCIONES DE MOVIMIENTO ====================
+void MoverAtras() {
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW );
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+void MoverAdelante() {
+    if (VerificarApagado()) {
+        Detenerse();
+        return;
+    }
+    
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+void Detenerse() {
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, 0);
+    ledcWrite(MotorB_Channel, 0);
+  #else
+    analogWrite(MotorA_PWM, 0);
+    analogWrite(MotorB_PWM, 0);
+  #endif
+}
+
+void AtaqueEnemigo() {
+    if (VerificarApagado()) {
+        Detenerse();
+        return;
+    }
+    
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, HIGH);
+    digitalWrite(MotorB_IN1, HIGH);
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Maxima);
+    ledcWrite(MotorB_Channel, Velocidad_Maxima);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Maxima);
+    analogWrite(MotorB_PWM, Velocidad_Maxima);
+  #endif
+}
+
+
+void MoverDerecha() {
+    if (VerificarApagado()) {
+        Detenerse();
+        return;
+    }
+    
+    digitalWrite(MotorA_IN1, HIGH);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW );
+    digitalWrite(MotorB_IN2, LOW);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+void MoverIzquierda() {
+    if (VerificarApagado()) {
+        Detenerse();
+        return;
+    }
+    
+    digitalWrite(MotorA_IN1, LOW);
+    digitalWrite(MotorA_IN2, LOW);
+    digitalWrite(MotorB_IN1, LOW);
+    digitalWrite(MotorB_IN2, HIGH);
+  #ifdef ARDUINO_ARCH_ESP32
+    ledcWrite(MotorA_Channel, Velocidad_Lenta);
+    ledcWrite(MotorB_Channel, Velocidad_Lenta);
+  #else
+    analogWrite(MotorA_PWM, Velocidad_Lenta);
+    analogWrite(MotorB_PWM, Velocidad_Lenta);
+  #endif
+}
+
+// ==================== CONTROL REMOTO ====================
+bool ControlRemotoActivo() {
+  bool estado_actual = digitalRead(Pin_Control_Remoto);
+  
+  if (estado_actual == LOW && ultimo_estado_boton == HIGH) {
+    if (millis() - ultimo_cambio_boton > debounce_delay) {
+      robot_encendido = !robot_encendido;
+      ultimo_cambio_boton = millis();
+      
+      Serial.print("Estado: ");
+      Serial.println(robot_encendido ? "ON" : "OFF");
+    }
+  }
+  
+  ultimo_estado_boton = estado_actual;
+  return robot_encendido;
+}
+
+bool VerificarApagado() {
+  return !robot_encendido;
+}
+
+// Sistema de delays no bloqueantes
+unsigned long tiempo_accion = 0;
+bool accion_en_progreso = false;
+
+void DelayConVerificacion(unsigned long ms) {
+  if (!accion_en_progreso) {
+    tiempo_accion = millis() + ms;
+    accion_en_progreso = true;
+  }
+}
+
+bool DelayCompletado() {
+  if (accion_en_progreso && millis() >= tiempo_accion) {
+    accion_en_progreso = false;
+    return true;
+  }
+  return !accion_en_progreso;
+}
+
+// ==================== MODOS ====================
+int LeerModoActivo() {
+  bool dip1_activo = (digitalRead(Pin_DIP1) == LOW);
+  bool dip3_activo = (digitalRead(Pin_DIP3) == LOW);
+  
+  if (dip1_activo && !dip3_activo) {
+    return 1;
+  }
+  else if (!dip1_activo && dip3_activo) {
+    return 3;
+  }
+  else {
+    return 0;
+  }
+}
+
+void EjecutarModo(int modo) {
+  switch(modo) {
+    case 1:
+      ModoSoloPiso();
+      break;
+    case 3:
+      ModoSumoCompleto();
+      break;
+    default:
+      ModoSoloPiso();
+      break;
+  }
+}
+
+void ModoSoloPiso() {
+  if (VerificarApagado()) {
+    Detenerse();
+    return;
+  }
+  
+  if (HayPeligroDeCaida()) {
+    ManejarDeteccionPiso();
+    return;
+  }
+  
+  MoverAdelante();
+  DelayConVerificacion(100);
+}
+
+void ModoSumoCompleto() {
+  if (VerificarApagado()) {
+    Detenerse();
+    return;
+  }
+  
+  if (HayPeligroDeCaida()) {
+    ManejarDeteccionPiso();
+    return;
+  }
+  
+  bool enemigo_frontal_izq = DeteccionEnemigos(PinSensor_Frontal_Izquierdo);
+  bool enemigo_frontal_cen = DeteccionEnemigos(PinSensor_Frontal_Central);
+  bool enemigo_frontal_der = DeteccionEnemigos(PinSensor_Frontal_Derecho);
+  bool enemigo_lat_izq = DeteccionEnemigos(PinSensor_Lateral_Izquierdo);
+  bool enemigo_lat_der = DeteccionEnemigos(PinSensor_Lateral_Derecho);
+
+  if (enemigo_frontal_cen || enemigo_frontal_izq || enemigo_frontal_der || enemigo_lat_izq || enemigo_lat_der) {
+    if (enemigo_frontal_cen) {
+      AtaqueEnemigo();
+      return;
+    }
+    else if (enemigo_frontal_izq) {
+      MoverIzquierda();
+      DelayConVerificacion(200);
+      return;
+    }
+    else if (enemigo_frontal_der) {
+      MoverDerecha();
+      DelayConVerificacion(200);
+      return;
+    }
+    else if (enemigo_lat_izq) {
+      MoverIzquierda();
+      DelayConVerificacion(300);
+      return;
+    }
+    else if (enemigo_lat_der) {
+      MoverDerecha();
+      DelayConVerificacion(300);
+      return;
+    }
+  }
+  
+  MoverAdelante();
+}
+
+// ==================== SETUP ====================
+void setup() {
+  Serial.begin(115200);
+  delay(2000);
+  
+  Serial.println("=== BIGBOY ESP32 ===");
+  Serial.println("DIP1 ON = Modo 1 (Solo piso)");
+  Serial.println("DIP3 ON = Modo 3 (Sumo completo)");
+  
+  pinMode(PinSensor_Piso_Izquierdo, INPUT);
+  pinMode(PinSensor_Piso_Derecho, INPUT);
+  pinMode(PinSensor_Frontal_Izquierdo, INPUT);
+  pinMode(PinSensor_Frontal_Central, INPUT);
+  pinMode(PinSensor_Frontal_Derecho, INPUT);
+  pinMode(PinSensor_Lateral_Izquierdo, INPUT);
+  pinMode(PinSensor_Lateral_Derecho, INPUT);
+  pinMode(Pin_Control_Remoto, INPUT_PULLUP);  
+  pinMode(Pin_DIP1, INPUT_PULLUP);          
+  pinMode(Pin_DIP3, INPUT_PULLUP);
+  pinMode(MotorA_IN1, OUTPUT);
+  pinMode(MotorA_IN2, OUTPUT);
+  pinMode(MotorA_PWM, OUTPUT);
+  pinMode(MotorB_IN1, OUTPUT);
+  pinMode(MotorB_IN2, OUTPUT);
+  pinMode(MotorB_PWM, OUTPUT);
+
+#ifdef ARDUINO_ARCH_ESP32
+  ledcSetup(MotorA_Channel, PWM_Freq, PWM_Resolution);
+  ledcAttachPin(MotorA_PWM, MotorA_Channel);
+  ledcSetup(MotorB_Channel, PWM_Freq, PWM_Resolution);
+  ledcAttachPin(MotorB_PWM, MotorB_Channel);
+#endif
+}
+
+// ==================== LOOP PRINCIPAL ====================
+void loop() {
+
+ // Leer estado del control remoto y modo activo
+  bool control_activo = ControlRemotoActivo();
+  int modo_actual = LeerModoActivo();
+  
+  // Debug de estado cada 3 segundos
+  static unsigned long ultimo_estado = 0;
+  if (millis() - ultimo_estado > 3000) {
+    ultimo_estado = millis();
+    
+    Serial.print(" Estado: ");
+    Serial.print(control_activo ? "ENCENDIDO" : "APAGADO");
+    Serial.print(" | Modo: ");
+    Serial.print(modo_actual);
+    
+    // Interpretación del modo actual
+    Serial.print(" (");
+    if (modo_actual == 1) Serial.print("SOLO PISO");
+    else if (modo_actual == 3) Serial.print("SUMO COMPLETO");
+    else Serial.print("SIN MODO");
+    Serial.print(")");
+    
+    Serial.print(" | Control GPIO14: ");
+    Serial.print(digitalRead(Pin_Control_Remoto) ? "HIGH" : "LOW");
+    Serial.println("");
+    
+    // Estado de sensores de piso para debug
+    if (control_activo) {
+      bool peligro_izq = DetectaBordePisoIzquierdo();
+      bool peligro_der = DetectaBordePisoDerecho();
+      Serial.print(" Piso - IZQ: ");
+      Serial.print(peligro_izq ? "PELIGRO" : "seguro");
+      Serial.print(" | DER: ");
+      Serial.print(peligro_der ? "PELIGRO" : "seguro");
+      Serial.println("");
+    }
+    
+    // DEBUG de DIPs
+    bool d1 = digitalRead(Pin_DIP1) == LOW;
+    bool d3 = digitalRead(Pin_DIP3) == LOW;
+    
+    Serial.print("📌 DIPs - D1:");
+    Serial.print(d1 ? "ON" : "off");
+    Serial.print(" D3:");
+    Serial.print(d3 ? "ON" : "off");
+    Serial.println("");
+  }
+  
+    // Si el control no está activo, detener el robot
+  if (!control_activo) {
+    Detenerse();
+    return;  
+  }
+  
+  EjecutarModo(modo_actual);
+}
